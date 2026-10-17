@@ -225,7 +225,7 @@
             กระเป๋าเงินและเครดิตคงเหลือ
           </h1>
           <p class="text-slate text-xs mt-1">
-            ใช้เครดิตซื้อไอดีเกมและงานบริการในร้านได้ทันทีในคลิกเดียว (1-Click Instant Checkout)
+            เติมเครดิตด้วยพร้อมเพย์หรือซองของขวัญ TrueMoney แอดมินจะตรวจสอบและเติมเข้ากระเป๋าให้
           </p>
         </div>
 
@@ -353,7 +353,7 @@
             <h2 class="text-base sm:text-lg font-heading font-semibold text-ink">
               2. ช่องทางชำระเงิน
             </h2>
-            <p class="text-xs text-slate">ระบบพร้อมเชื่อมต่อ SlipOK / TrueMoney API อัตโนมัติ</p>
+            <p class="text-xs text-slate">แจ้งการชำระเงิน แล้วรอแอดมินตรวจสอบ</p>
           </div>
 
           <!-- Payment Mode Switcher Tabs -->
@@ -373,11 +373,11 @@
             
             <!-- Dynamic QR Code Frame -->
             <div class="bg-gallery p-3 rounded-2xl border border-hairline w-44 h-44 mx-auto flex items-center justify-center relative">
-              <img id="topup-qr-image" src="https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=TACTICAL_TOPUP_500" alt="PromptPay QR" class="w-full h-full object-contain">
+              <img id="topup-qr-image" alt="PromptPay QR" class="w-full h-full object-contain">
             </div>
 
             <div class="text-[11px] text-slate space-y-1">
-              <div>บัญชี: <strong class="text-ink">บจก. แทคติคอล สโตร์ (ไทยแลนด์)</strong></div>
+              <div>บัญชี: <strong id="topup-promptpay-name" class="text-ink">-</strong></div>
               <div>ยอดที่ต้องโอน: <strong id="qr-exact-amount" class="text-pricingBlue font-bold text-sm">฿500.00</strong></div>
             </div>
 
@@ -392,7 +392,7 @@
                 class="w-full apple-input px-3.5 py-2 text-xs font-mono"
               />
               <span class="text-[10px] text-steel block">
-                ⚡ ระบบรองรับ SlipOK API เมื่อเชื่อมต่อคีย์หลังบ้านจะตรวจยอดทันที
+                แอดมินตรวจสอบยอดก่อนเติมเครดิต โดยปกติใช้เวลาไม่นาน
               </span>
             </div>
 
@@ -400,8 +400,8 @@
               id="btn-confirm-topup-pp" 
               onclick="executeTopup('promptpay')" 
               type="button" 
-              class="w-full apple-pricing-pill py-3.5 text-sm font-bold flex items-center justify-center gap-2 shadow-md">
-              <span>ยืนยันการโอนเงินและรับเครดิตทันที</span>
+              class="w-full apple-pricing-pill py-3.5 text-sm font-bold flex items-center justify-center gap-2 ">
+              <span>แจ้งการโอนเงิน</span>
             </button>
           </div>
 
@@ -430,16 +430,12 @@
               id="btn-confirm-topup-tm" 
               onclick="executeTopup('truemoney')" 
               type="button" 
-              class="w-full apple-pricing-pill py-3.5 text-sm font-bold flex items-center justify-center gap-2 shadow-md">
-              <span>ยืนยันซองของขวัญและรับเครดิต</span>
+              class="w-full apple-pricing-pill py-3.5 text-sm font-bold flex items-center justify-center gap-2 ">
+              <span>ส่งซองของขวัญเพื่อตรวจสอบ</span>
             </button>
           </div>
 
-          <!-- API Gateway Status Note -->
-          <div class="bg-mist p-3 rounded-xl border border-hairline text-[11px] text-slate flex items-center gap-2">
-            <span class="w-2 h-2 rounded-full bg-emerald-500 shrink-0"></span>
-            <span>API Gateway Engine: พร้อมรับคำขอ และรองรับ API Key จากหลังบ้าน</span>
-          </div>
+          <p class="text-[11px] text-slate">เครดิตจะเข้ากระเป๋าหลังแอดมินตรวจสอบการชำระเงินแล้วเท่านั้น</p>
 
         </div>
       </div>

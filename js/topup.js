@@ -1,17 +1,12 @@
 import { db, auth } from "../firebase-config.js";
-import { 
-  collection, 
-  doc, 
-  getDoc,
-  getDocs,
-  setDoc, 
-  updateDoc,
-  runTransaction,
+import {
+  collection,
+  doc,
+  setDoc,
   serverTimestamp,
   query,
   where,
-  limit,
-  onSnapshot 
+  onSnapshot
 } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 import { 
   onAuthStateChanged, 
@@ -20,7 +15,8 @@ import {
 
 /**
  * TACTICAL STORE — Topup & Wallet Controller (js/topup.js)
- * Atomic Ledger, Preset Bonuses, Dynamic QR & API Gateway Integration Ready
+ * The browser only files a pending top-up request. An admin checks the payment and credits the
+ * wallet (see approveTopup in admin.js); firestore.rules block any client write to users/*.
  */
 
 let currentUser = null;
@@ -28,11 +24,19 @@ let currentAmount = 500;
 let currentBonus = 25;
 let currentMethod = 'promptpay';
 let systemSettings = null;
+let unsubWallet = null;
+let unsubHistory = null;
+let historyList = [];
+const esc = (v) => String(v ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+const TOPUP_STATUS = {
+  pending: ['รอตรวจสอบ', 'text-launchOrange'],
+  completed: ['เติมแล้ว', 'text-appleBlue'],
+  rejected: ['ไม่อนุมัติ', 'text-slate']
+};
 
 document.addEventListener('DOMContentLoaded', () => {
   initAuthListener();
   initSettingsListener();
-  renderTopupHistory();
   updateTopupCalculations();
 });
 
@@ -54,35 +58,37 @@ function initAuthListener() {
       
       // Live listener on user wallet doc
       listenUserWallet(user.uid);
+      listenTopupHistory(user.uid);
     } else {
       if (loggedIn) loggedIn.classList.add('hidden');
       if (loggedOut) loggedOut.classList.remove('hidden');
+      if (unsubWallet) unsubWallet();
+      if (unsubHistory) unsubHistory();
+      unsubWallet = unsubHistory = null;
+      historyList = [];
       updateWalletUI(0);
+      renderTopupHistory();
     }
   });
 }
 
 function listenUserWallet(uid) {
-  try {
-    const userRef = doc(db, "users", uid);
-    onSnapshot(userRef, (snap) => {
-      if (snap.exists()) {
-        const data = snap.data();
-        const bal = parseFloat(data.walletBalance) || 0;
-        updateWalletUI(bal);
-      } else {
-        // Read local storage cache if doc doesn't exist
-        const localBal = parseFloat(localStorage.getItem('tactical_wallet_balance')) || 0;
-        updateWalletUI(localBal);
-      }
-    }, (err) => {
-      console.warn("Wallet listener fallback:", err);
-      const localBal = parseFloat(localStorage.getItem('tactical_wallet_balance')) || 0;
-      updateWalletUI(localBal);
-    });
-  } catch (e) {
-    console.warn("Listen wallet error:", e);
-  }
+  if (unsubWallet) unsubWallet();
+  unsubWallet = onSnapshot(doc(db, "users", uid), (snap) => {
+    updateWalletUI(snap.exists() ? (parseFloat(snap.data().walletBalance) || 0) : 0);
+  }, (err) => {
+    console.warn("Wallet listener:", err);
+    updateWalletUI(0);
+  });
+}
+
+function listenTopupHistory(uid) {
+  if (unsubHistory) unsubHistory();
+  unsubHistory = onSnapshot(query(collection(db, "topup_transactions"), where("uid", "==", uid)), (snap) => {
+    historyList = snap.docs.map(d => d.data());
+    historyList.sort((a, b) => (b.createdAt?.toMillis?.() || Date.now()) - (a.createdAt?.toMillis?.() || Date.now()));
+    renderTopupHistory();
+  }, (err) => console.warn("Topup history:", err));
 }
 
 function updateWalletUI(amount) {
@@ -91,23 +97,16 @@ function updateWalletUI(amount) {
   const formatted = `฿${amount.toFixed(2)}`;
   if (heroBal) heroBal.innerText = formatted;
   if (navBal) navBal.innerText = formatted;
-  localStorage.setItem('tactical_wallet_balance', amount.toString());
 }
 
 // ==========================================
 // 2. SETTINGS LISTENER (API KEYS & CONFIG)
 // ==========================================
 function initSettingsListener() {
-  try {
-    const sDoc = doc(db, "system", "settings");
-    onSnapshot(sDoc, (snap) => {
-      if (snap.exists()) {
-        systemSettings = snap.data();
-      }
-    });
-  } catch (e) {
-    console.warn("Settings listener error:", e);
-  }
+  onSnapshot(doc(db, "system", "settings"), (snap) => {
+    systemSettings = snap.exists() ? snap.data() : null;
+    updateTopupCalculations();
+  }, (e) => console.warn("Settings listener error:", e));
 }
 
 // ==========================================
@@ -162,9 +161,13 @@ function updateTopupCalculations() {
   if (qrAmt) qrAmt.innerText = `฿${currentAmount.toFixed(2)}`;
   if (voucherAmt) voucherAmt.innerText = `฿${currentAmount.toFixed(2)}`;
 
+  // Real QR image and account name come from admin settings; never show a made-up QR.
+  const qrUrl = systemSettings?.promptpayQrUrl;
+  const nameEl = document.getElementById('topup-promptpay-name');
+  if (nameEl) nameEl.innerText = systemSettings?.promptpayName || 'ติดต่อแอดมิน';
   if (qrImg) {
-    const qrData = `TACTICAL_TOPUP_${currentAmount.toFixed(2)}_BONUS_${currentBonus}`;
-    qrImg.src = `https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodeURIComponent(qrData)}`;
+    if (qrUrl) qrImg.src = qrUrl; else qrImg.removeAttribute('src');
+    qrImg.classList.toggle('hidden', !qrUrl);
   }
 }
 
@@ -189,117 +192,57 @@ function switchTopupPaymentTab(method) {
 }
 
 // ==========================================
-// 4. ATOMIC TOPUP EXECUTION (API KEY READY)
+// 4. FILE A PENDING TOP-UP REQUEST
 // ==========================================
+let isTopupSubmitting = false;
+
 async function executeTopup(method) {
-  let proof = '';
-
-  if (method === 'promptpay') {
-    const slipInput = document.getElementById('topup-slip-ref');
-    proof = slipInput ? slipInput.value.trim() : '';
-    if (!proof) {
-      // If slip ref not given, auto-generate a transaction code for testing
-      proof = `SLIP-${Date.now().toString().slice(-8)}`;
-    }
-  } else {
-    const vInput = document.getElementById('topup-voucher-link');
-    proof = vInput ? vInput.value.trim() : '';
-    if (!proof || !proof.includes('truemoney.com')) {
-      triggerToast('กรุณากรอกลิงก์ซองของขวัญ TrueMoney ให้ถูกต้อง');
-      vInput?.focus();
-      return;
-    }
+  if (isTopupSubmitting) return;
+  if (!currentUser) {
+    triggerToast('กรุณาเข้าสู่ระบบก่อนเติมเงิน');
+    return;
   }
 
-  const btn = method === 'promptpay' ? document.getElementById('btn-confirm-topup-pp') : document.getElementById('btn-confirm-topup-tm');
-  if (btn) {
-    btn.disabled = true;
-    btn.innerText = 'กำลังประมวลผลการเติมเงินผ่าน API Gateway...';
+  const input = document.getElementById(method === 'promptpay' ? 'topup-slip-ref' : 'topup-voucher-link');
+  const proof = input ? input.value.trim() : '';
+  if (method === 'promptpay' && proof.length < 6) {
+    triggerToast('กรุณากรอกเลขอ้างอิงสลิปให้ครบ');
+    input?.focus();
+    return;
+  }
+  if (method === 'truemoney' && !/^https:\/\/gift\.truemoney\.com\//.test(proof)) {
+    triggerToast('กรุณากรอกลิงก์ซองของขวัญ TrueMoney ให้ถูกต้อง');
+    input?.focus();
+    return;
   }
 
-  const txnId = `TOPUP-${Date.now().toString().slice(-6)}`;
-  const finalCredit = currentAmount + currentBonus;
-
-  // Build Transaction Record
-  const txnRecord = {
-    txnId,
-    uid: currentUser ? currentUser.uid : 'guest',
-    email: currentUser ? currentUser.email : 'guest@tactical.store',
-    amount: currentAmount,
-    bonusCredit: currentBonus,
-    finalCredit: finalCredit,
-    paymentMethod: method,
-    proofRef: proof,
-    status: 'completed', // When API key is active on backend, Webhook can verify automatically
-    verifiedVia: systemSettings?.slipokApiKey ? 'SlipOK_Auto_API' : 'Instant_Gateway_Engine',
-    createdAt: serverTimestamp(),
-    createdAtIso: new Date().toISOString()
-  };
+  const btn = document.getElementById(method === 'promptpay' ? 'btn-confirm-topup-pp' : 'btn-confirm-topup-tm');
+  const label = btn ? btn.innerText : '';
+  isTopupSubmitting = true;
+  if (btn) { btn.disabled = true; btn.innerText = 'กำลังส่งคำขอ...'; }
 
   try {
-    // 1. Record transaction in Firestore 'topup_transactions'
-    try {
-      await setDoc(doc(db, "topup_transactions", txnId), txnRecord);
-    } catch (dbErr) {
-      console.warn("Firestore record topup fallback:", dbErr);
-    }
-
-    // 2. Atomic credit increment on user document if logged in
-    if (currentUser && currentUser.uid) {
-      try {
-        const userRef = doc(db, "users", currentUser.uid);
-        await runTransaction(db, async (txn) => {
-          const userSnap = await txn.get(userRef);
-          let prevBal = 0;
-          if (userSnap.exists()) {
-            prevBal = parseFloat(userSnap.data().walletBalance) || 0;
-          }
-          const nextBal = prevBal + finalCredit;
-          txn.set(userRef, {
-            walletBalance: nextBal,
-            lastTopupAt: serverTimestamp()
-          }, { merge: true });
-        });
-      } catch (txErr) {
-        console.warn("Atomic wallet increment fallback:", txErr);
-      }
-    }
-
-    // 3. Local storage update
-    const curBal = parseFloat(localStorage.getItem('tactical_wallet_balance')) || 0;
-    const newBal = curBal + finalCredit;
-    localStorage.setItem('tactical_wallet_balance', newBal.toString());
-    updateWalletUI(newBal);
-
-    // Save to local topup history
-    saveLocalTopupHistory(txnRecord);
-    renderTopupHistory();
-
-    triggerToast(`🎉 เติมเงินสำเร็จ! ได้รับ ${finalCredit.toFixed(2)} เครดิตเข้ากระเป๋า`);
-
-    // Reset inputs
-    if (document.getElementById('topup-slip-ref')) document.getElementById('topup-slip-ref').value = '';
-    if (document.getElementById('topup-voucher-link')) document.getElementById('topup-voucher-link').value = '';
-
+    const ref = doc(collection(db, "topup_transactions"));
+    await setDoc(ref, {
+      txnId: 'TOPUP-' + ref.id.slice(0, 8).toUpperCase(),
+      uid: currentUser.uid,
+      email: currentUser.email || '',
+      amount: currentAmount,
+      bonusCredit: currentBonus,
+      finalCredit: currentAmount + currentBonus,
+      paymentMethod: method,
+      proofRef: proof,
+      status: 'pending',
+      createdAt: serverTimestamp()
+    });
+    if (input) input.value = '';
+    triggerToast('ส่งคำขอแล้ว แอดมินจะตรวจสอบและเติมเครดิตให้');
   } catch (err) {
-    console.error("Topup error:", err);
-    triggerToast('เกิดข้อผิดพลาดในการประมวลผล กรุณาลองใหม่อีกครั้ง');
+    console.warn("Topup request failed:", err);
+    triggerToast('ส่งคำขอไม่สำเร็จ กรุณาลองใหม่อีกครั้ง');
   } finally {
-    if (btn) {
-      btn.disabled = false;
-      btn.innerText = method === 'promptpay' ? 'ยืนยันการโอนเงินและรับเครดิตทันที' : 'ยืนยันซองของขวัญและรับเครดิต';
-    }
-  }
-}
-
-function saveLocalTopupHistory(txn) {
-  try {
-    const raw = localStorage.getItem('tactical_topup_history');
-    let list = raw ? JSON.parse(raw) : [];
-    list.unshift(txn);
-    localStorage.setItem('tactical_topup_history', JSON.stringify(list));
-  } catch (e) {
-    console.warn("Save topup history cache error:", e);
+    isTopupSubmitting = false;
+    if (btn) { btn.disabled = false; btn.innerText = label; }
   }
 }
 
@@ -308,38 +251,26 @@ function renderTopupHistory() {
   const empty = document.getElementById('topup-history-empty');
   if (!tbody) return;
 
-  const raw = localStorage.getItem('tactical_topup_history');
-  const list = raw ? JSON.parse(raw) : [];
-
-  if (list.length === 0) {
+  if (historyList.length === 0) {
     tbody.innerHTML = '';
     if (empty) empty.classList.remove('hidden');
     return;
   }
-
   if (empty) empty.classList.add('hidden');
 
-  tbody.innerHTML = list.map(item => `
+  tbody.innerHTML = historyList.map(item => {
+    const [label, cls] = TOPUP_STATUS[item.status] || [item.status || '-', 'text-slate'];
+    const when = item.createdAt?.toDate ? item.createdAt.toDate().toLocaleString('th-TH') : 'เมื่อสักครู่';
+    return `
     <tr class="hover:bg-mist/70 transition-colors">
-      <td class="py-2.5 px-3 font-mono font-medium text-ink">#${item.txnId}</td>
-      <td class="py-2.5 px-3">
-        <span class="bg-mist border border-hairline px-2 py-0.5 rounded-full text-[10px] text-slate font-medium">
-          ${item.paymentMethod === 'promptpay' ? '📱 พร้อมเพย์' : '🧧 TrueMoney'}
-        </span>
-      </td>
+      <td class="py-2.5 px-3 font-mono font-medium text-ink">#${esc(item.txnId)}</td>
+      <td class="py-2.5 px-3 text-slate">${item.paymentMethod === 'promptpay' ? 'พร้อมเพย์' : 'TrueMoney'}</td>
       <td class="py-2.5 px-3 font-mono font-medium text-ink">฿${Number(item.amount).toFixed(2)}</td>
-      <td class="py-2.5 px-3 font-mono font-bold text-pricingBlue">+${Number(item.finalCredit).toFixed(2)}</td>
-      <td class="py-2.5 px-3">
-        <span class="inline-flex items-center gap-1 text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200 text-[10px] font-semibold">
-          <span class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
-          สำเร็จ
-        </span>
-      </td>
-      <td class="py-2.5 px-3 text-right font-mono text-[10px] text-steel">
-        ${item.createdAtIso ? new Date(item.createdAtIso).toLocaleTimeString('th-TH') : 'ล่าสุด'}
-      </td>
-    </tr>
-  `).join('');
+      <td class="py-2.5 px-3 font-mono font-semibold text-ink">+${Number(item.finalCredit).toFixed(2)}</td>
+      <td class="py-2.5 px-3 text-xs font-semibold ${cls}">${esc(label)}</td>
+      <td class="py-2.5 px-3 text-right font-mono text-[10px] text-steel">${esc(when)}</td>
+    </tr>`;
+  }).join('');
 }
 
 function triggerToast(msg) {

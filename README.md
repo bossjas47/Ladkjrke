@@ -11,6 +11,12 @@ Static storefront for Arena Breakout accounts and in-game services (HTML + Tailw
    to `completed` with `accountDelivered`.
 3. The customer sees the credentials under "ออเดอร์ของฉัน" / account page once the order is `completed`.
 
+## How a wallet top-up works
+
+Same pattern: `js/topup.js` files a `pending` request (slip reference or TrueMoney link). Admin > Topups checks the
+money arrived and presses **ยืนยัน & เติมเครดิต**; one transaction credits `users/{uid}.walletBalance` and marks the
+request `completed`. Browsers cannot write `users/*`. Nothing in the shop spends the wallet balance yet.
+
 ## Before going live
 
 - Deploy `firestore.rules` (Firebase console > Firestore > Rules, or `firebase deploy --only firestore:rules`).
@@ -23,6 +29,6 @@ Static storefront for Arena Breakout accounts and in-game services (HTML + Tailw
 
 - Order totals and promo discounts are computed in the browser. Compare each order's amount with the product
   price when you verify payment.
-- `js/topup.js` (wallet top-up) is not converted yet: rules block it from crediting balances, so it no longer works.
+- Top-up bonus packs (+25, +80, +200 credit) are hard-coded in `front/topup.html` and the credit amount comes from the browser; check it when you approve.
+- `account.js` shows the admin tab by email list (`ADMIN_EMAILS`), which is UI only; anyone can register that username. Data stays protected by the `admin` claim.
 - `js/admin.js` still carries an unused copy of the old storefront checkout code (section 8).
-- Login falls back to storing passwords in localStorage (`js/login.js`) when Firebase Auth is unavailable.

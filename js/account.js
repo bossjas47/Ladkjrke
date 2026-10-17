@@ -87,19 +87,16 @@ function initAccountAuth() {
 
   onAuthStateChanged(auth, async (user) => {
     currentUser = user;
-    const localUser = (localStorage.getItem("tactical_current_user") || "").trim();
 
     if (loadingView) loadingView.classList.add("hidden");
 
-    if (user || localUser) {
+    if (user) {
       if (guestView) guestView.classList.add("hidden");
       if (dashView) dashView.classList.remove("hidden");
 
-      const displayName = user
-        ? (user.displayName || (user.email ? user.email.split("@")[0] : "Agent"))
-        : localUser;
+      const displayName = user.displayName || (user.email ? user.email.split("@")[0] : "Agent");
       currentUsername = displayName || "Agent";
-      currentIdentifier = user ? (user.email || user.uid) : localUser;
+      currentIdentifier = user.email || user.uid;
       isAdmin = isUserAdmin(user);
 
       // Render Display Name, Initial & Identifier
@@ -114,9 +111,7 @@ function initAccountAuth() {
       if (idEl) idEl.innerText = `IDENTIFIER: ${currentIdentifier}`;
       if (profileInput) profileInput.value = currentUsername;
       if (statusEl) {
-        statusEl.innerText = user
-          ? "สถานะ: ยืนยันตัวตนผ่าน Firebase Auth • บัญชีปลอดภัย"
-          : "สถานะ: เซสชันในเครื่อง (แนะนำให้เข้าสู่ระบบผ่านอีเมลเพื่อซิงค์ข้อมูล)";
+        statusEl.innerText = "สถานะ: ยืนยันตัวตนผ่าน Firebase Auth";
       }
 
       // Render Role Badge & Backoffice Tab Visibility (Apple Style Tokens)
@@ -151,7 +146,6 @@ async function handleAccountSignOut() {
   if (!window.confirm("คุณต้องการออกจากระบบใช่หรือไม่?")) return;
 
   try {
-    localStorage.removeItem("tactical_current_user");
     await signOut(auth);
     triggerToast("ออกจากระบบเรียบร้อยแล้ว");
     setTimeout(() => {
@@ -159,7 +153,6 @@ async function handleAccountSignOut() {
     }, 800);
   } catch (err) {
     console.warn("Sign out error:", err);
-    localStorage.removeItem("tactical_current_user");
     window.location.href = "../index.html";
   }
 }
@@ -504,9 +497,6 @@ async function handleDisplayNameUpdate(e) {
   try {
     if (currentUser) {
       await updateProfile(currentUser, { displayName: newName });
-    }
-    if (localStorage.getItem("tactical_current_user")) {
-      localStorage.setItem("tactical_current_user", newName);
     }
 
     currentUsername = newName;

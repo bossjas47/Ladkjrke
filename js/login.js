@@ -7,7 +7,7 @@ import {
 } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
 
 /**
- * TACTICAL STORE — Auth Logic (Username & Password with Dual Firebase & Local Fallback)
+ * TACTICAL STORE — Auth Logic (username + password via Firebase Auth only)
  */
 
 let toastTimeout = null;
@@ -84,33 +84,8 @@ function usernameToEmail(username) {
   return `${asciiSafe || 'agent'}@tactical.store`;
 }
 
-// ระบบสำรอง: จัดเก็บบัญชีลงในเครื่อง (ทำงานอัตโนมัติเมื่อ Firebase ไม่พร้อมใช้งาน)
-function saveLocalAccount(username, password) {
-  try {
-    const raw = localStorage.getItem('tactical_accounts');
-    const accounts = raw ? JSON.parse(raw) : {};
-    accounts[username.toLowerCase()] = { username, password, createdAt: new Date().toISOString() };
-    localStorage.setItem('tactical_accounts', JSON.stringify(accounts));
-    localStorage.setItem('tactical_current_user', username);
-  } catch (e) {
-    console.warn("Storage error:", e);
-  }
-}
-
-function verifyLocalAccount(username, password) {
-  try {
-    const raw = localStorage.getItem('tactical_accounts');
-    const accounts = raw ? JSON.parse(raw) : {};
-    const acc = accounts[username.toLowerCase()];
-    if (acc && acc.password === password) {
-      localStorage.setItem('tactical_current_user', acc.username);
-      return true;
-    }
-  } catch (e) {
-    console.warn("Storage error:", e);
-  }
-  return false;
-}
+// Old versions kept plaintext passwords here; wipe them from the browser.
+try { localStorage.removeItem('tactical_accounts'); localStorage.removeItem('tactical_current_user'); } catch (_) {}
 
 export async function handleLoginSubmit(e) {
   if (e && e.preventDefault) e.preventDefault();
@@ -135,22 +110,12 @@ export async function handleLoginSubmit(e) {
   try {
     const userCredential = await signInWithEmailAndPassword(auth, email, password);
     const displayName = userCredential.user.displayName || username;
-    localStorage.setItem('tactical_current_user', displayName);
     triggerToast(`ยินดีต้อนรับกลับ คุณ ${displayName}`);
     setTimeout(() => {
       window.location.href = 'account.html';
     }, 1200);
   } catch (error) {
     console.warn("Login with Firebase Auth:", error.code, error.message);
-    
-    // ตรวจสอบกับบัญชีในเครื่อง
-    if (verifyLocalAccount(username, password)) {
-      triggerToast(`ยินดีต้อนรับกลับ คุณ ${username}`);
-      setTimeout(() => {
-        window.location.href = 'account.html';
-      }, 1200);
-      return;
-    }
     
     let errMsg = "เข้าสู่ระบบไม่สำเร็จ กรุณาตรวจสอบชื่อผู้ใช้งานหรือรหัสผ่าน";
     if (error.code === 'auth/user-not-found' || error.code === 'auth/invalid-credential') {
@@ -204,7 +169,6 @@ export async function handleRegisterSubmit(e) {
     await updateProfile(userCredential.user, {
       displayName: username
     });
-    saveLocalAccount(username, password);
     triggerToast("สร้างบัญชีสำเร็จ! กำลังพาท่านเข้าสู่ระบบ...");
     setTimeout(() => {
       window.location.href = 'account.html';
@@ -212,21 +176,13 @@ export async function handleRegisterSubmit(e) {
   } catch (error) {
     console.warn("Register error with Firebase Auth:", error.code, error.message);
     
-    // หาก Firebase Console ยังไม่ได้เปิดใช้งาน Email/Password ให้บันทึกลงระบบในเครื่องทันที ไม่บล็อกผู้ใช้
-    if (error.code === 'auth/operation-not-allowed' || error.code === 'auth/network-request-failed') {
-      saveLocalAccount(username, password);
-      triggerToast("สร้างบัญชีสำเร็จเรียบร้อย! กำลังเข้าสู่ระบบ...");
-      setTimeout(() => {
-        window.location.href = 'account.html';
-      }, 1200);
-      return;
-    }
-
     let errMsg = "สร้างบัญชีไม่สำเร็จ กรุณาลองใหม่อีกครั้ง";
     if (error.code === 'auth/email-already-in-use') {
       errMsg = "ชื่อผู้ใช้งานนี้มีผู้ใช้แล้ว โปรดตั้งชื่ออื่น";
     } else if (error.code === 'auth/weak-password') {
       errMsg = "รหัสผ่านง่ายเกินไป โปรดตั้งอย่างน้อย 6 ตัวอักษร";
+    } else if (error.code === 'auth/network-request-failed') {
+      errMsg = "เชื่อมต่อเครือข่ายไม่ได้ กรุณาลองใหม่อีกครั้ง";
     }
     
     triggerToast(errMsg);

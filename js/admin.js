@@ -1197,29 +1197,26 @@ async function handleSaveSettings(event) {
   }
 }
 
+const TOPUP_STATUS_UI = {
+  pending: ['รอตรวจสอบ', 'text-launchOrange'],
+  completed: ['เติมแล้ว', 'text-appleBlue'],
+  rejected: ['ไม่อนุมัติ', 'text-slate']
+};
+
 async function renderAdminTopups() {
   const tbody = document.getElementById('admin-topups-table-body');
   const emptyEl = document.getElementById('admin-topups-empty');
   if (!tbody) return;
 
-  let topups = [
-    { id: 'TP-1001', userEmail: 'commander@tactical.gg', method: 'PromptPay SlipOK', amount: 500.00, credit: 500.00, slipRef: '202610129841', status: 'completed' },
-    { id: 'TP-1002', userEmail: 'arena_pro@gmail.com', method: 'TrueMoney Voucher', amount: 300.00, credit: 300.00, slipRef: 'https://gift.truemoney...', status: 'completed' },
-    { id: 'TP-1003', userEmail: 'ghost_operator@ogzmail.com', method: 'PromptPay SlipOK', amount: 1200.00, credit: 1200.00, slipRef: '202610127712', status: 'completed' }
-  ];
-
+  let topups = [];
   try {
     const snap = await getDocs(collection(db, 'topup_transactions'));
-    if (!snap.empty) {
-      topups = [];
-      snap.forEach(d => topups.push({ id: d.id, ...d.data() }));
-    }
+    snap.forEach(d => topups.push({ id: d.id, ...d.data() }));
   } catch (e) {
-    const local = localStorage.getItem('tactical_admin_topups');
-    if (local) {
-      try { topups = JSON.parse(local); } catch (_) {}
-    }
+    console.warn('Load topups failed:', e);
+    triggerToast('โหลดรายการเติมเงินไม่สำเร็จ (ต้องเข้าสู่ระบบด้วยบัญชีแอดมิน)');
   }
+  topups.sort((a, b) => (tsToDate(b.createdAt)?.getTime() || 0) - (tsToDate(a.createdAt)?.getTime() || 0));
 
   if (topups.length === 0) {
     tbody.innerHTML = '';
@@ -1228,23 +1225,61 @@ async function renderAdminTopups() {
   }
   if (emptyEl) emptyEl.classList.add('hidden');
 
-  tbody.innerHTML = topups.map(t => `
+  tbody.innerHTML = topups.map(t => {
+    const [label, cls] = TOPUP_STATUS_UI[t.status] || [t.status || '-', 'text-slate'];
+    const idArg = adminEsc(JSON.stringify(t.id));
+    const actions = t.status === 'pending' ? `
+        <button type="button" onclick="approveTopup(${idArg})" class="apple-pricing-pill px-3 py-1 text-[11px]">ยืนยัน &amp; เติมเครดิต</button>
+        <button type="button" onclick="rejectTopup(${idArg})" class="apple-explore-pill px-3 py-1 text-[11px] ml-1">ไม่อนุมัติ</button>` : '';
+    return `
     <tr class="hover:bg-mist/70 transition-colors border-b border-hairline">
-      <td class="py-3 px-4 font-mono font-bold text-xs text-ink">${t.id}</td>
-      <td class="py-3 px-4 text-xs font-mono text-slate">${t.userEmail || t.userId || 'Guest'}</td>
-      <td class="py-3 px-4 text-xs font-medium text-ink">${t.method || 'PromptPay'}</td>
-      <td class="py-3 px-4 text-xs font-mono font-semibold text-pricingBlue">฿${Number(t.amount || 0).toFixed(2)}</td>
-      <td class="py-3 px-4 text-xs font-mono font-bold text-emerald-600">+${Number(t.credit || t.amount || 0).toFixed(2)} ฿</td>
-      <td class="py-3 px-4 text-xs font-mono text-slate max-w-[180px] truncate" title="${t.slipRef || '-'}">${t.slipRef || '-'}</td>
-      <td class="py-3 px-4">
-        <span class="inline-block text-emerald-600 bg-emerald-50 px-2.5 py-0.5 rounded-full text-[10px] font-semibold border border-emerald-200">
-          ${t.status === 'completed' ? 'สำเร็จ (Approved)' : (t.status || 'สำเร็จ')}
-        </span>
-      </td>
-    </tr>
-  `).join('');
+      <td class="py-3 px-4 font-mono font-bold text-xs text-ink">${adminEsc(t.txnId || t.id)}</td>
+      <td class="py-3 px-4 text-xs font-mono text-slate">${adminEsc(t.email || t.uid || '-')}</td>
+      <td class="py-3 px-4 text-xs font-medium text-ink">${t.paymentMethod === 'truemoney' ? 'TrueMoney' : 'พร้อมเพย์'}</td>
+      <td class="py-3 px-4 text-xs font-mono font-semibold text-ink">฿${Number(t.amount || 0).toFixed(2)}</td>
+      <td class="py-3 px-4 text-xs font-mono font-semibold text-ink">+${Number(t.finalCredit || t.amount || 0).toFixed(2)}</td>
+      <td class="py-3 px-4 text-xs font-mono text-slate break-all select-all max-w-[220px]">${adminEsc(t.proofRef || '-')}</td>
+      <td class="py-3 px-4 text-xs font-semibold ${cls}">${adminEsc(label)}</td>
+      <td class="py-3 px-4 whitespace-nowrap">${actions}</td>
+    </tr>`;
+  }).join('');
 }
 
+// Credits the wallet only after the admin has checked the money really arrived. One transaction
+// flips the request and adds the credit, so a double click cannot pay twice.
+async function approveTopup(txnId) {
+  if (!confirm('ยืนยันว่าได้รับเงินแล้ว และต้องการเติมเครดิตให้ผู้ใช้?')) return;
+  try {
+    const tRef = doc(db, 'topup_transactions', txnId);
+    await runTransaction(db, async (txn) => {
+      const tSnap = await txn.get(tRef);
+      if (!tSnap.exists() || tSnap.data().status !== 'pending') throw new Error('NOT_PENDING');
+      const t = tSnap.data();
+      const uRef = doc(db, 'users', t.uid);
+      const uSnap = await txn.get(uRef);
+      const prev = uSnap.exists() ? (parseFloat(uSnap.data().walletBalance) || 0) : 0;
+      txn.set(uRef, { walletBalance: prev + (Number(t.finalCredit) || Number(t.amount) || 0), lastTopupAt: serverTimestamp() }, { merge: true });
+      txn.update(tRef, { status: 'completed', completedAt: serverTimestamp() });
+    });
+    triggerToast('เติมเครดิตเรียบร้อย');
+  } catch (e) {
+    console.warn('Approve topup failed:', e);
+    triggerToast(e.message === 'NOT_PENDING' ? 'รายการนี้ถูกดำเนินการไปแล้ว' : 'เติมเครดิตไม่สำเร็จ ตรวจสอบสิทธิ์แอดมิน');
+  }
+  renderAdminTopups();
+}
+
+async function rejectTopup(txnId) {
+  if (!confirm('ยืนยันไม่อนุมัติรายการนี้?')) return;
+  try {
+    await updateDoc(doc(db, 'topup_transactions', txnId), { status: 'rejected', completedAt: serverTimestamp() });
+    triggerToast('ไม่อนุมัติรายการแล้ว');
+  } catch (e) {
+    console.warn('Reject topup failed:', e);
+    triggerToast('ดำเนินการไม่สำเร็จ ตรวจสอบสิทธิ์แอดมิน');
+  }
+  renderAdminTopups();
+}
 
 function switchAdminTab(tabName) {
   const tabs = ['products', 'orders', 'promos', 'topups', 'settings'];
@@ -2022,6 +2057,8 @@ window.updateImagePreview = updateImagePreview;
 window.openStockModalQuick = openStockModalQuick;
 window.refreshOrders = refreshOrders;
 window.approveOrder = approveOrder;
+window.approveTopup = approveTopup;
+window.rejectTopup = rejectTopup;
 window.cancelOrder = cancelOrder;
 window.handleSaveSettings = handleSaveSettings;
 window.switchAdminTab = switchAdminTab;

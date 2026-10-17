@@ -14,124 +14,8 @@ import {
 
 const FALLBACK_IMG = 'https://placehold.co/800x500/f5f5f7/86868b?text=Arena+Breakout';
 
-const DEFAULT_PRODUCTS = [
-  {
-    id: '1',
-    name: 'M4A1 Full Mod + T6 Ammo x300',
-    category: 'ammo_acc',
-    price: 350.00,
-    koenLabel: 'มูลค่า Koen',
-    koen: '5,500,000',
-    stock: 12,
-    image: 'https://images.unsplash.com/photo-1595590424283-b8f1784cb2c8?auto=format&fit=crop&q=80&w=800',
-    gallery: [
-      'https://images.unsplash.com/photo-1595590424283-b8f1784cb2c8?auto=format&fit=crop&q=80&w=800',
-      'https://images.unsplash.com/photo-1574226516831-e1dff420e5c7?auto=format&fit=crop&q=80&w=800'
-    ],
-    tags: ['Best Seller', 'พร้อมบวก'],
-    desc: 'ปืน M4A1 ฟูลม็อดแต่งลดแรงถีบสูงสุด พร้อมกระสุนระดับ T6 M995 เจาะเกราะทะลวงระดับพระกาฬ x300 นัด พร้อมเล่นทันที',
-    specs: ['เกราะ T5 ครบชุด', 'กระสุน T6 x300', 'Koen เงินสด 5.5M', 'กระเป๋า 28 ช่อง']
-  },
-  {
-    id: '2',
-    name: 'FAL Heavy Spec + 7.62 M61 x200',
-    category: 'ammo_acc',
-    price: 290.00,
-    koenLabel: 'มูลค่า Koen',
-    koen: '4,200,000',
-    stock: 8,
-    image: 'https://images.unsplash.com/photo-1574226516831-e1dff420e5c7?auto=format&fit=crop&q=80&w=800',
-    tags: ['ยอดนิยม', 'ดุดัน'],
-    desc: 'ปืนดีดยากแต่ยิงแรงสุดในรุ่น FAL แต่งเต็ม พร้อมกระสุน M61 ทะลุเกราะระดับ 6 ทุกประเภท ลุยเรดได้ทันที',
-    specs: ['FAL Full Extended Mod', 'กระสุน M61 x200', 'Koen เงินสด 4.2M', 'หมวกกันกระสุน T5']
-  },
-  {
-    id: '3',
-    name: 'Wealth Starter Pack: 15,000,000 Koen',
-    category: 'koen',
-    price: 499.00,
-    koenLabel: 'มูลค่า Koen',
-    koen: '15,000,000',
-    stock: 15,
-    image: 'https://images.unsplash.com/photo-1612287230202-1ff1d85d1bdf?auto=format&fit=crop&q=80&w=800',
-    tags: ['คุ้มค่า', 'ทุนหนา'],
-    desc: 'ไอดีเงินสด Koen ล้วน 15 ล้าน พร้อมของในคลังมากมาย ไอดีสะอาด ปลอดภัย ไม่มีความเสี่ยงเรื่องแบน',
-    specs: ['Koen เงินสด 15,000,000', 'พื้นที่คลังปลดล็อกเต็ม', 'กล่องนิรภัย 2x2', 'เลเวล 30 พร้อมลงทุกด่าน']
-  },
-  {
-    id: '4',
-    name: 'Full Gear Prime: AX50 Thermal Spec',
-    category: 'full_acc',
-    price: 650.00,
-    koenLabel: 'มูลค่า Koen',
-    koen: '8,000,000',
-    stock: 5,
-    image: 'https://images.unsplash.com/photo-1595590424283-b8f1784cb2c8?auto=format&fit=crop&q=80&w=800',
-    tags: ['สไนเปอร์', 'กล้องความร้อน'],
-    desc: 'สไนเปอร์สายซุ่มยิง AX50 วันช็อตทุกเกราะ พร้อมกล้องจับความร้อน T7 สแกนศัตรูในความมืด ครบสูตรสายสไนเปอร์',
-    specs: ['AX50 Mod ครบชุด', 'กล้องความร้อน T7', 'เกราะหนัก T6 ทั้งตัว', 'Koen เงินสด 8M']
-  },
-  {
-    id: '5',
-    name: 'Exclusive Gold Skin Set + AK-102',
-    category: 'skins',
-    price: 420.00,
-    koenLabel: 'มูลค่า Koen',
-    koen: '2,500,000',
-    stock: 0,
-    image: 'https://images.unsplash.com/photo-1612287230202-1ff1d85d1bdf?auto=format&fit=crop&q=80&w=800',
-    tags: ['สกินแรร์', 'ลิมิเต็ด'],
-    desc: 'ไอดีสะสมสกินปืนทองคำสุดพรีเมียม ปืน AK-102 ลวดลายพิเศษ สวยงามสะดุดตาทุกแมตช์ พร้อมชุดคอมแบทสีดำ',
-    specs: ['สกินปืนทองคำแท้', 'ชุดคอมแบทสีดำครบเซ็ต', 'AK-102 Mod เต็ม', 'Koen เงินสด 2.5M']
-  },
-  {
-    id: '6',
-    name: 'Budget Runner: MPX 7N31 Rush Spec',
-    category: 'full_acc',
-    price: 120.00,
-    koenLabel: 'มูลค่า Koen',
-    koen: '3,000,000',
-    stock: 18,
-    image: 'https://images.unsplash.com/photo-1574226516831-e1dff420e5c7?auto=format&fit=crop&q=80&w=800',
-    tags: ['สายประหยัด', 'วิ่งไว'],
-    desc: 'เซ็ตวิ่งฟาร์มของไว ปืน SMG MPX ยิงไว ดาเมจทะลุเกราะ 7N31 ของครบตัวพร้อมลุย',
-    specs: ['MPX Full Mod ไวสุด', 'กระสุน 7N31 x250', 'เกราะเบา T4 วิ่งเร็ว', 'Koen เงินสด 3M']
-  },
-  {
-    id: 'srv_1',
-    name: 'บริการโยนกระสุน M61 (T6) พิกัดเป้าหมาย',
-    productType: 'service',
-    category: 'service_ammo',
-    serviceUnit: 'กอง',
-    serviceMin: 1,
-    serviceRate: 22.00,
-    price: 22.00,
-    koenLabel: 'กองกระสุน',
-    koen: 'กระสุน T6 M61 x60 นัด',
-    stock: 50,
-    image: 'https://images.unsplash.com/photo-1595590424283-b8f1784cb2c8?auto=format&fit=crop&q=80&w=800',
-    tags: ['โยน M61', 'ยอดนิยม', 'ส่งไว 3 นาที'],
-    desc: 'บริการโยนกระสุน M61 เกรด T6 เจาะเกราะสูงสุด ลงจุดนัดหมายในเกม ปลอดภัย ไม่โดนแบน รวดเร็วภายใน 3-5 นาที',
-    specs: ['กระสุน T6 M61 แท้ 100%', 'ส่งมอบในเกม (In-Game Safe Drop)', 'นัดรับในห้อง Raid ตามตกลง', 'ประกันของหาย 100% หากเกิดข้อผิดพลาด']
-  },
-  {
-    id: 'srv_2',
-    name: 'บริการโยนเงิน Koen M (ปลอดภัย ไม่โดนแบน)',
-    productType: 'service',
-    category: 'service_koen',
-    serviceUnit: 'M (ล้าน)',
-    serviceMin: 5,
-    serviceRate: 25.00,
-    price: 25.00,
-    koenLabel: 'มูลค่า Koen',
-    koen: '1,000,000 Koen / 1M',
-    stock: 100,
-    image: 'https://images.unsplash.com/photo-1612287230202-1ff1d85d1bdf?auto=format&fit=crop&q=80&w=800',
-    tags: ['โยนเงิน M', 'Koen สด', 'เรทดีสุด'],
-    desc: 'บริการโยกเงินและโยนเงิน Koen M สดเข้าตัว ปลอดภัยผ่านเทคนิคการเทรดที่ปลอดภัยที่สุด ขั้นต่ำ 5M ขึ้นไป',
-    specs: ['อัตราเรท 25฿ / 1M', 'ขั้นต่ำเริ่มต้น 5M', 'ส่งมอบผ่านระบบ Safe Trade ในเกม', 'ดูแลตลอดการส่งมอบโดยทีมงานมืออาชีพ']
-  }
-];
+// No demo catalog: an empty shop must look empty, not sell invented products.
+const DEFAULT_PRODUCTS = [];
 
 const CATEGORIES = [
   { id: 'all', name: 'ทั้งหมด' },
@@ -355,13 +239,7 @@ function applySystemSettings(data) {
           ${safeMarquee}
         </span>
         <span class="text-hairline shrink-0">•</span>
-        <span class="mx-6 whitespace-nowrap shrink-0">🔒 รับประกันทุกไอดี ปลอดภัย ไม่เสี่ยงโดนแบน บัญชีสะอาด 100%</span>
-        <span class="text-hairline shrink-0">•</span>
-        <span class="mx-6 text-appleBlue font-medium whitespace-nowrap shrink-0">🎁 โค้ดส่วนลด: TACTICAL ลด 50 บาท | ARENA10 ลด 10%</span>
-        <span class="text-hairline shrink-0">•</span>
-        <span class="mx-6 text-ink whitespace-nowrap shrink-0">คลังสต็อกไอดีพร้อมส่ง Arena Breakout อันดับ 1</span>
-        <span class="text-hairline shrink-0">•</span>
-        <span class="mx-6 whitespace-nowrap shrink-0">🔒 มีประกันหลังการขาย เปลี่ยนรหัสและผูกอีเมลได้ทันที</span>
+        <span class="mx-6 text-appleBlue font-medium whitespace-nowrap shrink-0">โค้ดส่วนลด: TACTICAL ลด 50 บาท | ARENA10 ลด 10%</span>
         <span class="text-hairline shrink-0">•</span>
       `;
       track.innerHTML = singleItem + singleItem;
@@ -684,7 +562,7 @@ function openDetailModal(productId) {
 
   const specsContainer = document.getElementById('modal-specs');
   if (specsContainer) {
-    const specsList = Array.isArray(p.specs) && p.specs.length > 0 ? p.specs : ['รับประกันความปลอดภัย 100%', 'จัดส่งรวดเร็วอัตโนมัติ'];
+    const specsList = Array.isArray(p.specs) && p.specs.length > 0 ? p.specs : [];
     specsContainer.innerHTML = specsList.map(item => `
       <div class="flex items-center gap-2">
         <span class="text-appleBlue font-bold">✓</span>
@@ -700,7 +578,7 @@ function openDetailModal(productId) {
     buyBtn.className = 'bg-control text-steel px-6 py-2.5 rounded-button text-xs font-medium cursor-not-allowed';
     buyBtn.onclick = null;
   } else {
-    buyBtn.innerText = 'สั่งซื้อทันที';
+    buyBtn.innerText = 'สั่งซื้อ';
     buyBtn.disabled = false;
     buyBtn.className = 'apple-pricing-pill px-6 py-2.5 text-xs';
     buyBtn.onclick = () => {
