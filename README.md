@@ -17,6 +17,11 @@ Same pattern: `js/topup.js` files a `pending` request (slip reference or TrueMon
 money arrived and presses **ยืนยัน & เติมเครดิต**; one transaction credits `users/{uid}.walletBalance` and marks the
 request `completed`. Browsers cannot write `users/*`. Nothing in the shop spends the wallet balance yet.
 
+## Page transitions
+
+`css/transition.css` (native View Transitions: header stays, page fades and rises 10px) and `js/transition.js` (fade fallback for
+Firefox) are linked from every page. Both switch off under `prefers-reduced-motion`. New pages need the same two tags.
+
 ## Before going live
 
 - Deploy `firestore.rules` (Firebase console > Firestore > Rules, or `firebase deploy --only firestore:rules`).
