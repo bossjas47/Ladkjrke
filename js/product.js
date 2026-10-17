@@ -1,17 +1,14 @@
 import { db, auth } from "../firebase-config.js";
-import { 
-  collection, 
-  doc, 
+import {
+  collection,
+  doc,
   getDoc,
   getDocs,
-  setDoc, 
-  updateDoc,
-  runTransaction,
+  setDoc,
   serverTimestamp,
   query,
   where,
-  limit,
-  onSnapshot 
+  onSnapshot
 } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 import { 
   onAuthStateChanged, 
@@ -23,107 +20,16 @@ import {
  * High-Precision Apple Design System, Service Quantity Stepper & Instant Checkout
  */
 
-const DEFAULT_PRODUCTS = [
-  {
-    id: '1',
-    name: 'M4A1 Full Mod + T6 Ammo x300',
-    category: 'ammo_acc',
-    price: 350.00,
-    koenLabel: 'มูลค่า Koen',
-    koen: '5,500,000',
-    stock: 12,
-    image: 'https://images.unsplash.com/photo-1595590424283-b8f1784cb2c8?auto=format&fit=crop&q=80&w=800',
-    gallery: [
-      'https://images.unsplash.com/photo-1595590424283-b8f1784cb2c8?auto=format&fit=crop&q=80&w=800',
-      'https://images.unsplash.com/photo-1574226516831-e1dff420e5c7?auto=format&fit=crop&q=80&w=800',
-      'https://images.unsplash.com/photo-1612287230202-1ff1d85d1bdf?auto=format&fit=crop&q=80&w=800'
-    ],
-    tags: ['Best Seller', 'พร้อมบวก'],
-    desc: 'ปืน M4A1 ฟูลม็อดแต่งลดแรงถีบสูงสุด พร้อมกระสุนระดับ T6 M995 เจาะเกราะทะลวงระดับพระกาฬ x300 นัด พร้อมเล่นทันที',
-    specs: ['เกราะ T5 ครบชุด', 'กระสุน T6 x300', 'Koen เงินสด 5.5M', 'กระเป๋า 28 ช่อง']
-  },
-  {
-    id: '2',
-    name: 'FAL Heavy Spec + 7.62 M61 x200',
-    category: 'ammo_acc',
-    price: 290.00,
-    koenLabel: 'มูลค่า Koen',
-    koen: '4,200,000',
-    stock: 8,
-    image: 'https://images.unsplash.com/photo-1574226516831-e1dff420e5c7?auto=format&fit=crop&q=80&w=800',
-    gallery: [
-      'https://images.unsplash.com/photo-1574226516831-e1dff420e5c7?auto=format&fit=crop&q=80&w=800',
-      'https://images.unsplash.com/photo-1595590424283-b8f1784cb2c8?auto=format&fit=crop&q=80&w=800'
-    ],
-    tags: ['ยอดนิยม', 'ดุดัน'],
-    desc: 'ปืนดีดยากแต่ยิงแรงสุดในรุ่น FAL แต่งเต็ม พร้อมกระสุน M61 ทะลุเกราะระดับ 6 ทุกประเภท ลุยเรดได้ทันที',
-    specs: ['FAL Full Extended Mod', 'กระสุน M61 x200', 'Koen เงินสด 4.2M', 'หมวกกันกระสุน T5']
-  },
-  {
-    id: '3',
-    name: 'Wealth Starter Pack: 15,000,000 Koen',
-    category: 'koen',
-    price: 499.00,
-    koenLabel: 'มูลค่า Koen',
-    koen: '15,000,000',
-    stock: 15,
-    image: 'https://images.unsplash.com/photo-1612287230202-1ff1d85d1bdf?auto=format&fit=crop&q=80&w=800',
-    gallery: [
-      'https://images.unsplash.com/photo-1612287230202-1ff1d85d1bdf?auto=format&fit=crop&q=80&w=800'
-    ],
-    tags: ['คุ้มค่า', 'ทุนหนา'],
-    desc: 'ไอดีเงินสด Koen ล้วน 15 ล้าน พร้อมของในคลังมากมาย ไอดีสะอาด ปลอดภัย ไม่มีความเสี่ยงเรื่องแบน',
-    specs: ['Koen เงินสด 15,000,000', 'พื้นที่คลังปลดล็อกเต็ม', 'กล่องนิรภัย 2x2', 'เลเวล 30 พร้อมลงทุกด่าน']
-  },
-  {
-    id: 'srv_1',
-    name: 'บริการโยนกระสุน M61 (T6) พิกัดเป้าหมาย',
-    productType: 'service',
-    category: 'service_ammo',
-    serviceUnit: 'กอง',
-    serviceMin: 1,
-    serviceRate: 22.00,
-    price: 22.00,
-    koenLabel: 'กองกระสุน',
-    koen: 'กระสุน T6 M61 x60 นัด',
-    stock: 50,
-    image: 'https://images.unsplash.com/photo-1595590424283-b8f1784cb2c8?auto=format&fit=crop&q=80&w=800',
-    gallery: [
-      'https://images.unsplash.com/photo-1595590424283-b8f1784cb2c8?auto=format&fit=crop&q=80&w=800'
-    ],
-    tags: ['โยน M61', 'ยอดนิยม', 'ส่งไว 3 นาที'],
-    desc: 'บริการโยนกระสุน M61 เกรด T6 เจาะเกราะสูงสุด ลงจุดนัดหมายในเกม ปลอดภัย ไม่โดนแบน รวดเร็วภายใน 3-5 นาที',
-    specs: ['กระสุน T6 M61 แท้ 100%', 'ส่งมอบในเกม (In-Game Safe Drop)', 'นัดรับในห้อง Raid ตามตกลง', 'ประกันของหาย 100% หากเกิดข้อผิดพลาด']
-  },
-  {
-    id: 'srv_2',
-    name: 'บริการโยนเงิน Koen M (ปลอดภัย ไม่โดนแบน)',
-    productType: 'service',
-    category: 'service_koen',
-    serviceUnit: 'M (ล้าน)',
-    serviceMin: 5,
-    serviceRate: 25.00,
-    price: 25.00,
-    koenLabel: 'มูลค่า Koen',
-    koen: '1,000,000 Koen / 1M',
-    stock: 100,
-    image: 'https://images.unsplash.com/photo-1612287230202-1ff1d85d1bdf?auto=format&fit=crop&q=80&w=800',
-    gallery: [
-      'https://images.unsplash.com/photo-1612287230202-1ff1d85d1bdf?auto=format&fit=crop&q=80&w=800'
-    ],
-    tags: ['โยนเงิน M', 'Koen สด', 'เรทดีสุด'],
-    desc: 'บริการโยกเงินและโยนเงิน Koen M สดเข้าตัว ปลอดภัยผ่านเทคนิคการเทรดที่ปลอดภัยที่สุด ขั้นต่ำ 5M ขึ้นไป',
-    specs: ['อัตราเรท 25฿ / 1M', 'ขั้นต่ำเริ่มต้น 5M', 'ส่งมอบผ่านระบบ Safe Trade ในเกม', 'ดูแลตลอดการส่งมอบโดยทีมงานมืออาชีพ']
-  }
-];
-
-let allProducts = [...DEFAULT_PRODUCTS];
+let allProducts = [];
 let currentProduct = null;
 let currentGallery = [];
 let currentGalleryIdx = 0;
 let currentQuantity = 1;
 let currentDiscount = 0;
 let appliedPromoCode = null;
+let promoRule = null; // {type:'fixed'|'percent', value}, re-applied whenever the quantity changes
+let isSubmittingOrder = false;
+let shopSettings = {};
 let currentPaymentMethod = 'promptpay';
 let lastFulfilledOrder = null;
 
@@ -132,8 +38,33 @@ let lastFulfilledOrder = null;
 // ==========================================
 document.addEventListener('DOMContentLoaded', () => {
   initAuthListener();
+  initShopSettings();
   loadProductPage();
 });
+
+function escapeHtml(str) {
+  return String(str ?? '')
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+// PromptPay QR / account name come from system/settings so no payment details are hard-coded in the page.
+function initShopSettings() {
+  try {
+    onSnapshot(doc(db, 'system', 'settings'), (snap) => {
+      shopSettings = snap.exists() ? snap.data() : {};
+      const qr = document.getElementById('product-qr-image');
+      const placeholder = document.getElementById('product-qr-placeholder');
+      const name = document.getElementById('product-promptpay-name');
+      const ok = /^https:\/\//.test(String(shopSettings.promptpayQrUrl || ''));
+      if (qr) { if (ok) qr.src = shopSettings.promptpayQrUrl; qr.classList.toggle('hidden', !ok); }
+      if (placeholder) placeholder.classList.toggle('hidden', ok);
+      if (name) name.innerText = shopSettings.promptpayName || '';
+    }, (err) => console.warn('Settings listener error:', err));
+  } catch (err) {
+    console.warn('Settings listener skipped:', err);
+  }
+}
 
 async function loadProductPage() {
   const params = new URLSearchParams(window.location.search);
@@ -155,7 +86,7 @@ async function loadProductPage() {
   if (targetId) {
     currentProduct = allProducts.find(p => String(p.id) === String(targetId));
   }
-  if (!currentProduct && allProducts.length > 0) {
+  if (!currentProduct && !targetId && allProducts.length > 0) {
     currentProduct = allProducts[0];
   }
 
@@ -197,6 +128,7 @@ function renderProductDetails(p) {
   currentQuantity = minOrder;
   currentDiscount = 0;
   appliedPromoCode = null;
+  promoRule = null;
 
   // Title, Headings & Breadcrumbs
   document.title = `${p.name} — TACTICAL STORE`;
@@ -539,6 +471,12 @@ function recalculatePrices() {
   }
 
   const subtotal = currentQuantity * unitRate;
+  if (promoRule) {
+    const raw = promoRule.type === 'percent' ? Math.round(subtotal * promoRule.value / 100) : promoRule.value;
+    currentDiscount = Math.min(raw, subtotal);
+  } else {
+    currentDiscount = 0;
+  }
   let finalPrice = Math.max(0, subtotal - currentDiscount);
 
   // Update DOM Line items
@@ -576,53 +514,59 @@ function recalculatePrices() {
   const voucherTotal = document.getElementById('voucher-exact-total');
   if (voucherTotal) voucherTotal.innerText = `฿${finalPrice.toFixed(2)}`;
 
-  // Update dynamic PromptPay QR code
-  const qrImg = document.getElementById('product-qr-image');
-  if (qrImg) {
-    const qrData = `TACTICAL_STORE_PAY_${currentProduct.id}_AMT_${finalPrice.toFixed(2)}`;
-    qrImg.src = `https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodeURIComponent(qrData)}`;
-  }
 }
 
 // ==========================================
 // 4. PROMO CODES & PAYMENT TABS
 // ==========================================
-function applyProductPromo() {
+async function applyProductPromo() {
   const input = document.getElementById('product-promo-input');
   const msg = document.getElementById('promo-status-msg');
-  if (!input || !msg) return;
+  if (!input || !msg || !currentProduct) return;
 
   const code = input.value.trim().toUpperCase();
+  const show = (text, ok) => {
+    msg.innerText = text;
+    msg.className = `text-[11px] font-medium pt-1 block ${ok ? 'text-appleBlue' : 'text-launchOrange'}`;
+  };
+
   if (!code) {
-    currentDiscount = 0;
+    promoRule = null;
     appliedPromoCode = null;
-    msg.innerText = '';
     msg.className = 'hidden';
     recalculatePrices();
     return;
   }
 
-  const isService = currentProduct.productType === 'service' || currentProduct.category?.startsWith('service_');
-  const unitRate = isService ? (parseFloat(currentProduct.serviceRate) || parseFloat(currentProduct.price) || 0) : (parseFloat(currentProduct.price) || 0);
-  const subtotal = currentQuantity * unitRate;
-
-  if (code === 'TACTICAL') {
-    currentDiscount = Math.min(50, subtotal);
-    appliedPromoCode = 'TACTICAL';
-    msg.innerText = '✓ ใช้โค้ด TACTICAL สำเร็จ (ลด 50 บาท)';
-    msg.className = 'text-[11px] font-medium text-emerald-600 pt-1 block';
-  } else if (code === 'ARENA10') {
-    currentDiscount = subtotal * 0.10;
-    appliedPromoCode = 'ARENA10';
-    msg.innerText = '✓ ใช้โค้ด ARENA10 สำเร็จ (ลด 10%)';
-    msg.className = 'text-[11px] font-medium text-emerald-600 pt-1 block';
-  } else {
-    currentDiscount = 0;
-    appliedPromoCode = null;
-    msg.innerText = '✗ ไม่พบโค้ดส่วนลดนี้ หรือหมดอายุ';
-    msg.className = 'text-[11px] font-medium text-launchOrange pt-1 block';
+  // Firestore promo_codes first (admin-managed), then the two public codes advertised on the site.
+  let promo = null;
+  try {
+    const snap = await getDoc(doc(db, 'promo_codes', code));
+    if (snap.exists()) promo = snap.data();
+  } catch (err) {
+    console.warn('Fetch promo fallback:', err);
+  }
+  if (!promo) {
+    if (code === 'TACTICAL') promo = { type: 'fixed', value: 50 };
+    else if (code === 'ARENA10') promo = { type: 'percent', value: 10 };
   }
 
+  const value = Number(promo?.value);
+  const used = Number(promo?.usedCount) || 0;
+  const quota = Number(promo?.maxTotalUses) || 0;
+  if (!promo || !['fixed', 'percent'].includes(promo.type) || !(value > 0)) {
+    promoRule = null;
+    appliedPromoCode = null;
+    show('ไม่พบโค้ดส่วนลดนี้ หรือหมดอายุ', false);
+  } else if (quota > 0 && used >= quota) {
+    promoRule = null;
+    appliedPromoCode = null;
+    show('โค้ดนี้ถูกใช้ครบตามจำนวนโควต้าแล้ว', false);
+  } else {
+    promoRule = { type: promo.type, value };
+    appliedPromoCode = code;
+    show(promo.type === 'percent' ? `ใช้โค้ด ${code} สำเร็จ (ลด ${value}%)` : `ใช้โค้ด ${code} สำเร็จ (ลด ${value} บาท)`, true);
+  }
   recalculatePrices();
 }
 
@@ -647,211 +591,140 @@ function switchProductPaymentTab(method) {
 }
 
 // ==========================================
-// 5. ATOMIC PURCHASE EXECUTION
+// 5. PENDING ORDER SUBMISSION
 // ==========================================
+function isTrueMoneyVoucher(url) {
+  try {
+    const u = new URL(url);
+    return u.protocol === 'https:' && u.hostname === 'gift.truemoney.com';
+  } catch {
+    return false;
+  }
+}
+
+// The browser only files a pending_payment order. An admin verifies the money and delivers the
+// credentials (accountDelivered), so nothing secret is ever readable or writable from here.
 async function executeProductPurchase() {
-  if (!currentProduct) return;
+  if (!currentProduct || isSubmittingOrder) return;
+  const user = auth?.currentUser;
+  if (!user) {
+    triggerToast('กรุณาเข้าสู่ระบบก่อนสั่งซื้อ');
+    setTimeout(() => { window.location.href = 'login.html?mode=login'; }, 1200);
+    return;
+  }
+
   const btn = document.getElementById('btn-confirm-product-order');
   const isService = currentProduct.productType === 'service' || currentProduct.category?.startsWith('service_');
   const unit = currentProduct.serviceUnit || (isService ? 'กอง' : 'ชิ้น');
 
-  // 1. Validate Buyer Email & Password (Required only Email & Password)
   const emailInput = document.getElementById('buyer-email');
-  const passwordInput = document.getElementById('buyer-password');
+  const contactInput = document.getElementById('buyer-contact');
   const buyerEmail = emailInput ? emailInput.value.trim() : '';
-  const buyerPassword = passwordInput ? passwordInput.value : '';
+  const buyerContact = contactInput ? contactInput.value.trim() : '';
 
   if (!buyerEmail || !buyerEmail.includes('@')) {
     triggerToast('กรุณากรอก Email ที่ถูกต้อง');
     emailInput?.focus();
     return;
   }
-
-  if (!buyerPassword) {
-    triggerToast('กรุณากรอกรหัสผ่านอีเมล');
-    passwordInput?.focus();
+  if (isService && !buyerContact) {
+    triggerToast('กรุณากรอกชื่อในเกม / UID หรือ Line ID เพื่อนัดรับของ');
+    contactInput?.focus();
     return;
   }
-
-  // Stock check
-  if (!isService && Number(currentProduct.stock) <= 0) {
+  if (Number(currentProduct.stock) <= 0) {
     triggerToast('ขออภัย สินค้านี้หมดจากคลังสต็อกแล้ว');
     return;
   }
 
-  btn.disabled = true;
-  btn.innerText = 'กำลังประมวลผลคำสั่งซื้ออัตโนมัติ...';
+  let paymentProof;
+  if (currentPaymentMethod === 'truemoney') {
+    paymentProof = document.getElementById('product-voucher-input')?.value.trim() || '';
+    if (!isTrueMoneyVoucher(paymentProof)) {
+      triggerToast('กรุณากรอกลิงก์ซองของขวัญ TrueMoney ให้ถูกต้อง (https://gift.truemoney.com/...)');
+      return;
+    }
+  } else {
+    if (document.getElementById('product-qr-image')?.classList.contains('hidden')) {
+      triggerToast('ร้านยังไม่เปิดรับชำระผ่านพร้อมเพย์ กรุณาเลือกช่องทางอื่น');
+      return;
+    }
+    paymentProof = document.getElementById('product-payment-ref')?.value.trim() || '';
+    if (!paymentProof) {
+      triggerToast('กรุณากรอกเวลาที่โอนหรือเลขอ้างอิงรายการ');
+      document.getElementById('product-payment-ref')?.focus();
+      return;
+    }
+  }
 
-  const orderNum = `ORD-${Date.now().toString().slice(-6)}`;
+  isSubmittingOrder = true;
+  btn.disabled = true;
+  btn.innerText = 'กำลังส่งคำสั่งซื้อ...';
+
   const unitRate = isService ? (parseFloat(currentProduct.serviceRate) || parseFloat(currentProduct.price) || 0) : (parseFloat(currentProduct.price) || 0);
   const subtotal = currentQuantity * unitRate;
-  const finalPrice = Math.max(0, subtotal - currentDiscount);
-
-  const buyerIgn = '';
-  const buyerContact = '';
-  let deliveredData = null;
+  const discount = Math.min(currentDiscount, subtotal);
+  const finalPrice = Math.round((subtotal - discount) * 100) / 100;
 
   try {
-    // If account: attempt atomic transaction from stock_items subcollection
-    if (!isService) {
-      try {
-        const prodRef = doc(db, "products", currentProduct.id);
-        const stockCol = collection(prodRef, "stock_items");
-        const q = query(stockCol, where("status", "==", "available"), limit(1));
-        const snap = await getDocs(q);
-
-        if (!snap.empty) {
-          const itemDoc = snap.docs[0];
-          const itemRef = doc(stockCol, itemDoc.id);
-
-          deliveredData = await runTransaction(db, async (txn) => {
-            const itemSnap = await txn.get(itemRef);
-            const pSnap = await txn.get(prodRef);
-
-            if (!itemSnap.exists() || itemSnap.data().status !== "available") {
-              throw new Error("ALREADY_CLAIMED");
-            }
-            const curStock = pSnap.data()?.stock || 0;
-            if (curStock <= 0) throw new Error("OUT_OF_STOCK");
-
-            const cred = itemSnap.data();
-            txn.update(itemRef, {
-              status: "sold",
-              orderId: orderNum,
-              soldAt: serverTimestamp()
-            });
-            txn.update(prodRef, {
-              stock: Math.max(0, curStock - 1),
-              updatedAt: serverTimestamp()
-            });
-
-            return {
-              user: cred.username || cred.user || 'ArenaAgent' + Math.floor(1000 + Math.random() * 9000),
-              pass: cred.password || cred.pass || 'Pass' + Math.floor(100000 + Math.random() * 900000)
-            };
-          });
-        }
-      } catch (txErr) {
-        console.warn("Stock transaction fallback:", txErr);
-      }
-    }
-
-    // Default credentials generator if not retrieved from transaction
-    if (!deliveredData) {
-      if (isService) {
-        deliveredData = {
-          serviceTicket: true,
-          ign: buyerIgn,
-          contact: buyerContact,
-          quantity: currentQuantity,
-          unit: unit,
-          queueNumber: Math.floor(10 + Math.random() * 90)
-        };
-      } else {
-        deliveredData = {
-          user: 'Agent_' + Math.floor(1000 + Math.random() * 9000),
-          pass: 'Pass_' + Math.random().toString(36).substring(2, 8).toUpperCase()
-        };
-      }
-    }
-
-    // Build Order Payload
+    const orderRef = doc(collection(db, 'orders'));
+    const orderId = `ORD-${orderRef.id.slice(0, 8).toUpperCase()}`;
     const orderPayload = {
-      orderId: orderNum,
+      orderNumber: orderId,
+      orderId,
       productId: currentProduct.id,
       productName: currentProduct.name,
       productType: isService ? 'service' : 'account',
       quantity: currentQuantity,
-      unit: unit,
+      unit,
       unitPrice: unitRate,
-      subtotal: subtotal,
-      discount: currentDiscount,
-      promoCode: appliedPromoCode || '',
-      finalPrice: finalPrice,
+      subtotal,
+      discount,
+      promoCode: appliedPromoCode || null,
+      amount: finalPrice,
+      finalPrice,
       paymentMethod: currentPaymentMethod,
-      buyerEmail: buyerEmail,
-      buyerPassword: buyerPassword,
-      buyerIgn: buyerIgn,
-      buyerContact: buyerContact,
-      credentials: deliveredData,
-      status: 'completed',
+      paymentProof,
+      buyerEmail,
+      buyerContact,
+      status: 'pending_payment',
+      userEmail: user.email || '',
+      userId: user.uid,
       createdAt: serverTimestamp()
     };
-
-    // Save to Firestore 'orders'
-    try {
-      await setDoc(doc(db, "orders", orderNum), orderPayload);
-    } catch (saveErr) {
-      console.warn("Save order to Firestore fallback:", saveErr);
-    }
-
-    // Cache locally in localStorage
-    saveOrderToLocalCache(orderPayload);
+    await setDoc(orderRef, orderPayload);
     lastFulfilledOrder = orderPayload;
-
-    // Display Fulfillment Card
     displayOrderSuccessCard(orderPayload);
-    triggerToast('สั่งซื้อสำเร็จ! ระบบจัดส่งข้อมูลเรียบร้อย');
-
+    triggerToast('ส่งคำสั่งซื้อแล้ว ทีมงานกำลังตรวจสอบการชำระเงิน');
   } catch (err) {
-    console.error("Order purchase error:", err);
-    triggerToast('เกิดข้อผิดพลาดในการประมวลผล กรุณาลองใหม่อีกครั้ง');
+    console.error('Order submit error:', err);
+    triggerToast('ส่งคำสั่งซื้อไม่สำเร็จ กรุณาลองใหม่อีกครั้ง');
   } finally {
+    isSubmittingOrder = false;
     btn.disabled = false;
-    btn.innerHTML = `<span>สั่งซื้อและชำระเงินทันที (฿${finalPrice.toFixed(2)})</span>`;
-  }
-}
-
-function saveOrderToLocalCache(order) {
-  try {
-    const raw = localStorage.getItem('tactical_my_orders');
-    let list = raw ? JSON.parse(raw) : [];
-    list.unshift({
-      ...order,
-      createdAtIso: new Date().toISOString()
-    });
-    localStorage.setItem('tactical_my_orders', JSON.stringify(list));
-  } catch (e) {
-    console.warn("Local storage cache error:", e);
+    btn.innerHTML = `<span>แจ้งชำระเงิน (฿${finalPrice.toFixed(2)})</span>`;
   }
 }
 
 function displayOrderSuccessCard(order) {
   const successCard = document.getElementById('product-order-success-card');
   if (!successCard) return;
-
   const orderNumEl = document.getElementById('order-result-id');
   if (orderNumEl) orderNumEl.innerText = `#${order.orderId}`;
-
-  const accBlock = document.getElementById('result-account-block');
-  const srvBlock = document.getElementById('result-service-block');
-
-  if (accBlock) accBlock.classList.remove('hidden');
-  if (srvBlock) srvBlock.classList.add('hidden');
-  const userEl = document.getElementById('result-username');
-  const passEl = document.getElementById('result-password');
-  if (userEl) userEl.innerText = order.buyerEmail || order.credentials.user;
-  if (passEl) passEl.innerText = order.buyerPassword || order.credentials.pass;
-
+  const nameEl = document.getElementById('order-result-product');
+  if (nameEl) nameEl.innerText = order.productName;
   successCard.classList.remove('hidden');
   successCard.scrollIntoView({ behavior: 'smooth', block: 'center' });
 }
 
 function copyOrderResultCredentials() {
   if (!lastFulfilledOrder) return;
-  let text = `เลขที่ออเดอร์: #${lastFulfilledOrder.orderId}\nสินค้า: ${lastFulfilledOrder.productName}\nยอดชำระ: ฿${lastFulfilledOrder.finalPrice.toFixed(2)}\n`;
-  if (lastFulfilledOrder.productType === 'service') {
-    text += `บริการ: ${lastFulfilledOrder.quantity} ${lastFulfilledOrder.unit}\nชื่อตัวละคร: ${lastFulfilledOrder.buyerIgn}\nช่องทางติดต่อ: ${lastFulfilledOrder.buyerContact}`;
-  } else {
-    text += `Username: ${lastFulfilledOrder.credentials.user}\nPassword: ${lastFulfilledOrder.credentials.pass}`;
-  }
-
+  const o = lastFulfilledOrder;
+  const text = `เลขที่ออเดอร์: #${o.orderId}\nสินค้า: ${o.productName}\nยอดชำระ: ฿${o.finalPrice.toFixed(2)}`;
   navigator.clipboard.writeText(text).then(() => {
-    triggerToast('คัดลอกข้อมูลออเดอร์เรียบร้อย!');
-    const btn = document.getElementById('btn-copy-result');
-    if (btn) btn.innerText = '✓ คัดลอกเรียบร้อยแล้ว';
+    triggerToast('คัดลอกเลขที่ออเดอร์เรียบร้อย');
   }).catch(() => {
-    triggerToast('คัดลอกสำเร็จ');
+    triggerToast('คัดลอกไม่สำเร็จ กรุณาจดเลขที่ออเดอร์ไว้');
   });
 }
 
@@ -876,7 +749,7 @@ function renderRelatedProducts(currentP) {
             src="${p.image}" 
             alt="${p.name}" 
             class="w-full h-full object-cover transition-transform duration-500 hover:scale-105"
-            onerror="this.src='https://placehold.co/800x500/f5f5f7/86868b?text=Arena+Breakout'"
+            onerror="this.onerror=null;this.src='https://placehold.co/800x500/f5f5f7/86868b?text=Arena+Breakout'"
           />
           <div class="absolute top-2.5 left-2.5 z-10">
             <span class="bg-gallery/95 text-ink border border-hairline text-[10px] font-semibold px-2 py-0.5 rounded-full">
@@ -935,48 +808,66 @@ function triggerToast(text) {
   }, 2800);
 }
 
-function openMyOrdersModal() {
+const ORDER_STATUS_LABEL = {
+  pending_payment: 'รอตรวจสอบการชำระเงิน',
+  completed: 'จัดส่งสำเร็จ',
+  cancelled: 'ยกเลิกแล้ว'
+};
+
+async function openMyOrdersModal() {
   const modal = document.getElementById('my-orders-modal');
   const listEl = document.getElementById('my-orders-list');
   const emptyEl = document.getElementById('my-orders-empty');
   if (!modal) return;
 
-  const raw = localStorage.getItem('tactical_my_orders');
-  const orders = raw ? JSON.parse(raw) : [];
+  modal.classList.remove('hidden');
+  modal.classList.add('flex');
+
+  const user = auth?.currentUser;
+  let orders = [];
+  if (user) {
+    try {
+      const snap = await getDocs(query(collection(db, 'orders'), where('userId', '==', user.uid)));
+      orders = snap.docs.map(d => ({
+        ...d.data(),
+        createdAt: d.data().createdAt?.toDate ? d.data().createdAt.toDate().toISOString() : d.data().createdAt
+      })).sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
+    } catch (err) {
+      console.warn('Load orders failed:', err);
+      triggerToast('โหลดประวัติคำสั่งซื้อไม่สำเร็จ');
+    }
+  }
 
   if (orders.length === 0) {
     if (listEl) listEl.innerHTML = '';
     if (emptyEl) emptyEl.classList.remove('hidden');
-  } else {
-    if (emptyEl) emptyEl.classList.add('hidden');
-    if (listEl) {
-      listEl.innerHTML = orders.map(ord => `
-        <div class="apple-card p-4 bg-mist border-hairline space-y-2 font-mono text-xs">
-          <div class="flex justify-between items-center border-b border-hairline pb-1.5 font-sans">
-            <span class="font-semibold text-ink">${ord.productName}</span>
-            <span class="text-pricingBlue font-semibold font-mono">฿${Number(ord.finalPrice).toFixed(2)}</span>
-          </div>
-          <div class="flex justify-between text-slate text-[11px]">
-            <span>ORDER: #${ord.orderId}</span>
-            <span>${ord.productType === 'service' ? 'งานบริการ' : 'ไอดีเกม'}</span>
-          </div>
-          ${ord.productType === 'service' ? `
-            <div class="text-[11px] text-ink font-sans bg-gallery p-2 rounded-lg border border-hairline">
-              IGN: ${ord.buyerIgn || '-'} | จำนวน: ${ord.quantity} ${ord.unit || 'กอง'}
-            </div>
-          ` : `
-            <div class="flex justify-between text-ink bg-gallery p-2 rounded-lg border border-hairline">
-              <span>U: ${ord.credentials?.user || '-'}</span>
-              <span>P: ${ord.credentials?.pass || '-'}</span>
-            </div>
-          `}
-        </div>
-      `).join('');
-    }
+    return;
   }
+  if (emptyEl) emptyEl.classList.add('hidden');
+  if (!listEl) return;
 
-  modal.classList.remove('hidden');
-  modal.classList.add('flex');
+  // Credentials appear only after an admin marks the order completed and delivers them.
+  listEl.innerHTML = orders.map(ord => {
+    const acc = ord.status === 'completed' ? (ord.accountDelivered || {}) : {};
+    const isSrv = ord.productType === 'service';
+    const detail = isSrv
+      ? `<div class="text-[11px] text-ink font-sans bg-gallery p-2 rounded-links border border-hairline">ติดต่อ: ${escapeHtml(ord.buyerContact || '-')} | จำนวน: ${escapeHtml(ord.quantity)} ${escapeHtml(ord.unit || 'กอง')}</div>`
+      : (acc.username
+        ? `<div class="flex justify-between text-ink bg-gallery p-2 rounded-links border border-hairline"><span>U: ${escapeHtml(acc.username)}</span><span>P: ${escapeHtml(acc.password)}</span></div>`
+        : `<div class="text-[11px] text-slate font-sans bg-gallery p-2 rounded-links border border-hairline">ไอดีจะแสดงที่นี่เมื่อทีมงานยืนยันการชำระเงินแล้ว</div>`);
+    return `
+      <div class="apple-card p-4 bg-mist border-hairline space-y-2 font-mono text-xs">
+        <div class="flex justify-between items-center border-b border-hairline pb-1.5 font-sans">
+          <span class="font-semibold text-ink">${escapeHtml(ord.productName)}</span>
+          <span class="text-ink font-semibold font-mono">฿${Number(ord.finalPrice).toFixed(2)}</span>
+        </div>
+        <div class="flex justify-between text-slate text-[11px]">
+          <span>ORDER: #${escapeHtml(ord.orderId)}</span>
+          <span>${escapeHtml(ORDER_STATUS_LABEL[ord.status] || ord.status || '-')}</span>
+        </div>
+        ${detail}
+      </div>`;
+  }).join('');
 }
 
 function closeMyOrdersModal() {

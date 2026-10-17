@@ -566,7 +566,7 @@ function renderProducts() {
             src="${safeImg}" 
             alt="${safeName}" 
             class="w-full h-full object-cover transition-transform duration-500 hover:scale-105 ${isOutOfStock ? 'grayscale opacity-75' : ''}"
-            onerror="this.src='${FALLBACK_IMG}'"
+            onerror="this.onerror=null;this.src='${FALLBACK_IMG}'"
           />
           
           <!-- Badges -->
@@ -731,7 +731,7 @@ function renderGalleryThumbnails() {
 
   strip.innerHTML = currentModalGallery.map((imgUrl, idx) => `
     <button type="button" onclick="switchGalleryImage(${idx})" class="w-16 h-12 rounded-xl overflow-hidden bg-mist border ${idx === currentGalleryIdx ? 'border-pricingBlue ring-1 ring-pricingBlue' : 'border-hairline'} shrink-0">
-      <img src="${escapeHtml(imgUrl)}" alt="Thumb" class="w-full h-full object-cover" onerror="this.src='${FALLBACK_IMG}'">
+      <img src="${escapeHtml(imgUrl)}" alt="Thumb" class="w-full h-full object-cover" onerror="this.onerror=null;this.src='${FALLBACK_IMG}'">
     </button>
   `).join('');
 }

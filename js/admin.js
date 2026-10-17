@@ -12,6 +12,8 @@ import {
   onSnapshot, 
   query,
   where,
+  limit,
+  runTransaction,
   serverTimestamp,
   increment
 } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
@@ -490,7 +492,7 @@ function renderAdminProducts(customList = null) {
               src="${product.image}" 
               alt="${product.name}" 
               class="w-full h-full object-cover"
-              onerror="this.src='https://placehold.co/100x70/f5f5f7/86868b?text=Tactical'"
+              onerror="this.onerror=null;this.src='https://placehold.co/100x70/f5f5f7/86868b?text=Tactical'"
             />
           </div>
         </td>
@@ -943,6 +945,17 @@ async function deleteSingleStockItem(productId, itemId) {
 // ==========================================
 // 7. ADMIN: ORDERS & PROMOS & SETTINGS
 // ==========================================
+const adminEsc = (v) => String(v ?? '')
+  .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+  .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+const tsToDate = (v) => (v?.toDate ? v.toDate() : (v ? new Date(v) : null));
+
+const ORDER_STATUS_UI = {
+  pending_payment: { label: 'รอตรวจสอบ', cls: 'text-launchOrange bg-mist border-hairline' },
+  completed: { label: 'ส่งมอบแล้ว', cls: 'text-appleBlue bg-mist border-hairline' },
+  cancelled: { label: 'ยกเลิก', cls: 'text-slate bg-mist border-hairline' }
+};
+
 async function renderAdminOrders() {
   const tbody = document.getElementById('admin-orders-table-body');
   const empty = document.getElementById('admin-orders-empty');
@@ -953,11 +966,14 @@ async function renderAdminOrders() {
     const snap = await getDocs(collection(db, 'orders'));
     snap.forEach(d => orders.push({ id: d.id, ...d.data() }));
   } catch (e) {
-    orders = JSON.parse(localStorage.getItem('tactical_my_orders') || '[]');
+    console.warn('Load orders failed:', e);
+    triggerToast('โหลดคำสั่งซื้อไม่สำเร็จ (ต้องเข้าสู่ระบบด้วยบัญชีแอดมิน)');
   }
+  orders.sort((a, b) => (tsToDate(b.createdAt)?.getTime() || 0) - (tsToDate(a.createdAt)?.getTime() || 0));
 
-  // Update Metrics
-  const rev = orders.reduce((sum, o) => sum + (Number(o.amount) || 0), 0);
+  // Revenue counts only orders whose payment was verified.
+  const done = orders.filter(o => o.status === 'completed');
+  const rev = done.reduce((sum, o) => sum + (Number(o.amount) || 0), 0);
   const promptPayCount = orders.filter(o => o.paymentMethod === 'promptpay').length;
   const trueMoneyCount = orders.filter(o => o.paymentMethod === 'truemoney').length;
 
@@ -980,22 +996,89 @@ async function renderAdminOrders() {
 
   tbody.innerHTML = orders.map(o => {
     const acc = o.accountDelivered || {};
+    const st = ORDER_STATUS_UI[o.status] || { label: o.status || '-', cls: 'text-slate bg-mist border-hairline' };
+    const when = tsToDate(o.createdAt);
+    const idArg = adminEsc(JSON.stringify(o.id));
+    const actions = o.status === 'pending_payment' ? `
+          <button type="button" onclick="approveOrder(${idArg})" class="apple-pricing-pill px-3 py-1 text-[11px]">ยืนยันชำระ &amp; ส่งมอบ</button>
+          <button type="button" onclick="cancelOrder(${idArg})" class="apple-explore-pill px-3 py-1 text-[11px] ml-1">ยกเลิก</button>` : '';
     return `
       <tr class="hover:bg-mist/70 transition-colors border-b border-hairline">
-        <td class="py-3 px-4 font-mono font-bold text-pricingBlue">${o.orderNumber || o.id}</td>
-        <td class="py-3 px-4 text-slate">${o.createdAt ? new Date(o.createdAt).toLocaleString('th-TH') : '-'}</td>
-        <td class="py-3 px-4 font-medium text-ink">${o.productName}</td>
-        <td class="py-3 px-4 font-mono font-bold text-ink">฿${Number(o.amount).toFixed(2)}</td>
-        <td class="py-3 px-4 uppercase font-semibold text-slate">${o.paymentMethod || 'PromptPay'}</td>
-        <td class="py-3 px-4 font-mono text-xs select-all text-slate">${acc.username || 'User'}:${acc.password || '••••••'}</td>
-        <td class="py-3 px-4">
-          <span class="inline-block text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full text-[10px] font-semibold border border-emerald-200">
-            สำเร็จ (Delivered)
-          </span>
-        </td>
+        <td class="py-3 px-4 font-mono font-bold text-ink">${adminEsc(o.orderNumber || o.id)}</td>
+        <td class="py-3 px-4 text-slate">${when ? when.toLocaleString('th-TH') : '-'}</td>
+        <td class="py-3 px-4 font-medium text-ink">${adminEsc(o.productName)} <span class="text-slate font-normal">×${adminEsc(o.quantity || 1)}</span>
+          <div class="text-[11px] text-slate font-normal">${adminEsc(o.userEmail || '')} ${o.buyerContact ? '· ' + adminEsc(o.buyerContact) : (o.productType === 'service' ? '· ' + adminEsc(o.buyerEmail || '') : '')}</div></td>
+        <td class="py-3 px-4 font-mono font-bold text-ink">฿${Number(o.amount || 0).toFixed(2)}${o.promoCode ? `<div class="text-[11px] text-slate font-normal">โค้ด ${adminEsc(o.promoCode)}</div>` : ''}</td>
+        <td class="py-3 px-4 uppercase font-semibold text-slate">${adminEsc(o.paymentMethod || '-')}
+          <div class="text-[11px] normal-case font-normal break-all select-all">${adminEsc(o.paymentProof || '')}</div></td>
+        <td class="py-3 px-4 font-mono text-xs select-all text-slate">${acc.username ? `${adminEsc(acc.username)}:${adminEsc(acc.password)}` : '-'}</td>
+        <td class="py-3 px-4"><span class="inline-block px-2 py-0.5 rounded-full text-[10px] font-semibold border ${st.cls}">${adminEsc(st.label)}</span></td>
+        <td class="py-3 px-4 whitespace-nowrap">${actions}</td>
       </tr>
     `;
   }).join('');
+}
+
+// Admin verifies the payment (slip / voucher) by hand, then this hands the goods over. The stock
+// item, stock count and order status change in one transaction so two admins cannot deliver the
+// same account twice.
+async function approveOrder(orderId) {
+  if (!confirm('ยืนยันว่าตรวจสอบการชำระเงินแล้ว และต้องการส่งมอบออเดอร์นี้?')) return;
+  try {
+    const orderRef = doc(db, 'orders', orderId);
+    const orderSnap = await getDoc(orderRef);
+    if (!orderSnap.exists()) throw new Error('NO_ORDER');
+    const order = orderSnap.data();
+    const prodRef = doc(db, 'products', order.productId);
+    const isService = order.productType === 'service';
+
+    let itemRef = null;
+    if (!isService) {
+      const found = await getDocs(query(collection(prodRef, 'stock_items'), where('status', '==', 'available'), limit(1)));
+      if (found.empty) { triggerToast('ไม่มีไอดีในคลังสำหรับสินค้านี้ กรุณาเติมสต็อกก่อน'); return; }
+      itemRef = found.docs[0].ref;
+    }
+
+    await runTransaction(db, async (txn) => {
+      const oSnap = await txn.get(orderRef);
+      const pSnap = await txn.get(prodRef);
+      const iSnap = itemRef ? await txn.get(itemRef) : null;
+      if (oSnap.data().status !== 'pending_payment') throw new Error('NOT_PENDING');
+      const qty = isService ? (Number(order.quantity) || 1) : 1;
+      const update = { status: 'completed', completedAt: serverTimestamp() };
+      if (iSnap) {
+        if (!iSnap.exists() || iSnap.data().status !== 'available') throw new Error('ITEM_TAKEN');
+        const cred = iSnap.data();
+        txn.update(itemRef, { status: 'sold', orderId: order.orderId, soldAt: serverTimestamp() });
+        update.accountDelivered = { username: cred.username, password: cred.password, stockItemId: itemRef.id };
+      }
+      if (pSnap.exists()) {
+        txn.update(prodRef, { stock: Math.max(0, (Number(pSnap.data().stock) || 0) - qty), updatedAt: serverTimestamp() });
+      }
+      txn.update(orderRef, update);
+    });
+
+    if (order.promoCode) {
+      try { await updateDoc(doc(db, 'promo_codes', order.promoCode), { usedCount: increment(1) }); } catch (_) {}
+    }
+    triggerToast('ส่งมอบออเดอร์เรียบร้อย');
+  } catch (e) {
+    console.warn('Approve order failed:', e);
+    triggerToast(e.message === 'NOT_PENDING' ? 'ออเดอร์นี้ถูกดำเนินการไปแล้ว' : e.message === 'ITEM_TAKEN' ? 'ไอดีนี้ถูกใช้ไปแล้ว ลองกดอีกครั้ง' : 'ส่งมอบไม่สำเร็จ ตรวจสอบสิทธิ์แอดมิน');
+  }
+  renderAdminOrders();
+}
+
+async function cancelOrder(orderId) {
+  if (!confirm('ยืนยันยกเลิกออเดอร์นี้?')) return;
+  try {
+    await updateDoc(doc(db, 'orders', orderId), { status: 'cancelled', cancelledAt: serverTimestamp() });
+    triggerToast('ยกเลิกออเดอร์แล้ว');
+  } catch (e) {
+    console.warn('Cancel order failed:', e);
+    triggerToast('ยกเลิกไม่สำเร็จ ตรวจสอบสิทธิ์แอดมิน');
+  }
+  renderAdminOrders();
 }
 
 function refreshOrders() {
@@ -1028,28 +1111,17 @@ async function loadAdminSettings() {
       }
     }
 
-    if (!data) {
-      data = {
-        marqueeText: "ระบบจัดส่งไอดีอัตโนมัติ 24 ชม. ได้รับรหัสทันทีหลังชำระเงิน",
-        ribbonText: "จ่ายดอกเบี้ย 0% นานสูงสุด 10 เดือน* สำหรับผลิตภัณฑ์และแพ็กเกจ Tactical Store ใหม่ของคุณ",
-        ribbonLinkText: "เลือกซื้อ",
-        ribbonLinkUrl: "#catalog-section",
-        stat1Val: "45,200+",
-        stat1Lbl: "สมาชิกในระบบ",
-        stat2Val: "1,405",
-        stat2Lbl: "ไอดีพร้อมส่งทันที",
-        stat3Val: "89,500+",
-        stat3Lbl: "ออเดอร์สำเร็จ",
-        stat4Val: "~3 วินาที",
-        stat4Lbl: "เวลาจัดส่งเฉลี่ย",
-        discordLink: "https://discord.gg/tacticalstore",
-        lineId: "@tacticalstore",
-        slipokKey: "",
-        slipokBranch: "",
-        truemoneyKey: "",
-        promptpayNo: ""
-      };
+    if (!data) data = {};
+
+    // Provider keys live in an admin-only document, never in the public system/settings.
+    let secrets = {};
+    try {
+      const secSnap = await getDoc(doc(db, 'system_private', 'secrets'));
+      if (secSnap.exists()) secrets = secSnap.data();
+    } catch (e) {
+      console.warn('Load secrets skipped:', e);
     }
+    data = { ...data, ...secrets };
 
     const setVal = (id, val) => {
       const el = document.getElementById(id);
@@ -1074,6 +1146,8 @@ async function loadAdminSettings() {
     setVal('setting-slipok-branch', data.slipokBranch);
     setVal('setting-truemoney-key', data.truemoneyKey);
     setVal('setting-promptpay-no', data.promptpayNo);
+    setVal('setting-promptpay-qr-url', data.promptpayQrUrl);
+    setVal('setting-promptpay-name', data.promptpayName);
 
   } catch (e) {
     console.warn("Load settings error:", e);
@@ -1085,6 +1159,7 @@ async function handleSaveSettings(event) {
 
   const getVal = (id) => (document.getElementById(id)?.value || '').trim();
 
+  // Only storefront-safe fields go to the public system/settings document.
   const payload = {
     marqueeText: getVal('setting-marquee-text'),
     ribbonText: getVal('setting-ribbon-text'),
@@ -1100,6 +1175,11 @@ async function handleSaveSettings(event) {
     stat4Lbl: getVal('setting-stat4-lbl'),
     discordLink: getVal('setting-discord-link'),
     lineId: getVal('setting-line-id'),
+    promptpayQrUrl: getVal('setting-promptpay-qr-url'),
+    promptpayName: getVal('setting-promptpay-name'),
+    updatedAt: serverTimestamp()
+  };
+  const secrets = {
     slipokKey: getVal('setting-slipok-key'),
     slipokBranch: getVal('setting-slipok-branch'),
     truemoneyKey: getVal('setting-truemoney-key'),
@@ -1109,13 +1189,12 @@ async function handleSaveSettings(event) {
 
   try {
     await setDoc(doc(db, 'system', 'settings'), payload, { merge: true });
-    triggerToast('✓ บันทึกการตั้งค่าร้านค้า & API Keys สำเร็จ!');
+    await setDoc(doc(db, 'system_private', 'secrets'), secrets, { merge: true });
+    triggerToast('บันทึกการตั้งค่าร้านค้าสำเร็จ');
   } catch (e) {
-    console.warn("Save settings fallback:", e);
-    triggerToast('✓ บันทึกการตั้งค่าร้านค้า & API Keys เรียบร้อย (Local)');
+    console.warn('Save settings failed:', e);
+    triggerToast('บันทึกไม่สำเร็จ ตรวจสอบสิทธิ์แอดมิน');
   }
-
-  localStorage.setItem('tactical_store_settings', JSON.stringify(payload));
 }
 
 async function renderAdminTopups() {
@@ -1352,7 +1431,7 @@ function renderProducts() {
             src="${product.image}" 
             alt="${product.name}" 
             class="w-full h-full object-cover transition-transform duration-700 ${!isOutOfStock ? 'group-hover:scale-105' : 'grayscale'}"
-            onerror="this.src='https://placehold.co/800x500/18181b/f59e0b?text=Arena+Breakout'"
+            onerror="this.onerror=null;this.src='https://placehold.co/800x500/18181b/f59e0b?text=Arena+Breakout'"
           />
           <div class="absolute inset-0 bg-gradient-to-t from-zinc-950 via-transparent to-transparent z-10"></div>
           
@@ -1942,6 +2021,8 @@ window.setImagePreset = setImagePreset;
 window.updateImagePreview = updateImagePreview;
 window.openStockModalQuick = openStockModalQuick;
 window.refreshOrders = refreshOrders;
+window.approveOrder = approveOrder;
+window.cancelOrder = cancelOrder;
 window.handleSaveSettings = handleSaveSettings;
 window.switchAdminTab = switchAdminTab;
 

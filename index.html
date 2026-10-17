@@ -2,13 +2,13 @@
 <html lang="th" class="light">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>TACTICAL STORE — Arena Breakout Instant Market</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>TACTICAL STORE — Arena Breakout Market</title>
   
-  <!-- Fonts: Inter (SF Pro Substitute) & Anuphan / Prompt for clean Thai rendering -->
+  <!-- Fonts: Inter (SF Pro Substitute) & Anuphan for clean Thai rendering -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Anuphan:wght@400;500;600;700&family=Inter:wght@400;500;600;700&family=Prompt:wght@400;500;600&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Anuphan:wght@400;500;600;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   
   <!-- Tailwind CSS CDN -->
   <script src="https://cdn.tailwindcss.com"></script>
@@ -31,8 +31,8 @@
             launchOrange: '#b64400'
           },
           fontFamily: {
-            heading: ['-apple-system', 'BlinkMacSystemFont', 'SF Pro Display', 'Inter', 'Anuphan', 'Prompt', 'sans-serif'],
-            body: ['-apple-system', 'BlinkMacSystemFont', 'SF Pro Text', 'Inter', 'Anuphan', 'Prompt', 'sans-serif'],
+            heading: ['-apple-system', 'BlinkMacSystemFont', 'SF Pro Display', 'Inter', 'Anuphan', 'sans-serif'],
+            body: ['-apple-system', 'BlinkMacSystemFont', 'SF Pro Text', 'Inter', 'Anuphan', 'sans-serif'],
             mono: ['SF Mono', 'ui-monospace', 'Menlo', 'monospace']
           },
           borderRadius: {
@@ -63,8 +63,8 @@
       --color-pricing-blue: #0071e3;
       --color-launch-orange: #b64400;
 
-      --font-sf-pro-display: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Inter', 'Anuphan', 'Prompt', sans-serif;
-      --font-sf-pro-text: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Inter', 'Anuphan', 'Prompt', sans-serif;
+      --font-sf-pro-display: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Inter', 'Anuphan', sans-serif;
+      --font-sf-pro-text: -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Inter', 'Anuphan', sans-serif;
 
       --radius-cards: 28px;
       --radius-links: 10px;
@@ -106,7 +106,7 @@
       border-radius: var(--radius-buttons);
       font-size: 12px;
       line-height: 16px;
-      font-weight: 500;
+      font-weight: 400;
       transition: opacity 0.2s ease;
       display: inline-flex;
       align-items: center;
@@ -114,6 +114,10 @@
     }
     .apple-pricing-pill:hover {
       opacity: 0.9;
+    }
+    .apple-pricing-pill:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
     }
 
     .apple-explore-pill {
@@ -123,7 +127,7 @@
       border-radius: var(--radius-buttons);
       font-size: 12px;
       line-height: 16px;
-      font-weight: 500;
+      font-weight: 400;
       transition: background-color 0.2s ease;
       display: inline-flex;
       align-items: center;
@@ -172,6 +176,9 @@
     .animate-marquee-track:hover {
       animation-play-state: paused;
     }
+    @media (prefers-reduced-motion: reduce) {
+      .animate-marquee-track { animation: none; }
+    }
     @keyframes marqueeScroll {
       0% { transform: translate3d(0, 0, 0); }
       100% { transform: translate3d(-50%, 0, 0); }
@@ -183,30 +190,9 @@
 <body class="selection:bg-pricingBlue/20 selection:text-ink pb-20 md:pb-0">
 
   <!-- Toast Notification Wrapper -->
-  <div id="toast-box" class="fixed top-5 left-1/2 -translate-x-1/2 z-50 pointer-events-none transition-all duration-300 opacity-0 -translate-y-4 scale-95 flex items-center gap-3 bg-gallery border border-hairline text-ink px-5 py-2.5 rounded-pill">
+  <div id="toast-box" role="status" aria-live="polite" class="fixed top-5 left-1/2 -translate-x-1/2 z-50 pointer-events-none transition-all duration-300 opacity-0 -translate-y-4 scale-95 flex items-center gap-3 bg-gallery border border-hairline text-ink px-5 py-2.5 rounded-pill">
     <span class="w-2 h-2 rounded-full bg-appleBlue shrink-0"></span>
     <span id="toast-text" class="text-xs font-medium">ข้อความแจ้งเตือน</span>
-  </div>
-
-  <!-- Live Order Ticker Notification -->
-  <div id="live-order-ticker" class="fixed bottom-20 md:bottom-8 left-6 z-40 hidden pointer-events-none transition-all duration-500">
-    <div class="apple-card p-3.5 flex items-center gap-3.5 max-w-sm pointer-events-auto bg-gallery/95 backdrop-blur-md">
-      <div class="w-10 h-10 rounded-2xl bg-mist flex items-center justify-center text-pricingBlue shrink-0 text-sm font-semibold">
-        ⚡
-      </div>
-      <div class="flex flex-col text-left">
-        <div class="flex items-center gap-1.5 text-[10px] text-slate">
-          <span class="w-1.5 h-1.5 rounded-full bg-appleBlue animate-pulse"></span>
-          <span id="ticker-time" class="font-mono">เมื่อ 1 นาทีที่แล้ว</span>
-        </div>
-        <div class="text-xs font-semibold text-ink line-clamp-1" id="ticker-product">
-          ลูกค้าเพิ่งสั่งซื้อ: M4A1 Full Mod
-        </div>
-        <div class="text-[11px] text-appleBlue font-medium" id="ticker-price">
-          จัดส่งสำเร็จ • ฿350.00
-        </div>
-      </div>
-    </div>
   </div>
 
   <!-- Global Announcement Header Strip -->
@@ -214,30 +200,39 @@
     <div class="animate-marquee-track flex items-center whitespace-nowrap shrink-0" id="marquee-track-container">
       <span class="mx-6 inline-flex items-center gap-2 text-ink shrink-0 whitespace-nowrap">
         <span class="text-launchOrange font-semibold">ใหม่</span>
-        ระบบจัดส่งไอดีและบริการอัตโนมัติ 24 ชม. ได้รับรหัสทันทีหลังชำระเงิน
+        ทีมงานตรวจสอบการชำระเงินและส่งมอบทุกออเดอร์
       </span>
       <span class="text-hairline shrink-0">•</span>
-      <span class="mx-6 shrink-0 whitespace-nowrap">🔒 รับประกันทุกไอดี ปลอดภัย ไม่เสี่ยงโดนแบน บัญชีสะอาด 100%</span>
+      <span class="mx-6 text-appleBlue font-medium shrink-0 whitespace-nowrap">โค้ดส่วนลด: TACTICAL ลด 50 บาท | ARENA10 ลด 10%</span>
       <span class="text-hairline shrink-0">•</span>
-      <span class="mx-6 text-appleBlue font-medium shrink-0 whitespace-nowrap">🎁 โค้ดส่วนลด: TACTICAL ลด 50 บาท | ARENA10 ลด 10%</span>
+      <span class="mx-6 shrink-0 whitespace-nowrap">ติดต่อฝ่ายสนับสนุนทาง Line ID: @tacticalstore</span>
       <span class="text-hairline shrink-0">•</span>
-      <span class="mx-6 text-ink shrink-0 whitespace-nowrap">คลังสต็อกไอดีพร้อมส่ง Arena Breakout อันดับ 1</span>
-      <span class="text-hairline shrink-0">•</span>
-      <span class="mx-6 shrink-0 whitespace-nowrap">🔒 มีประกันหลังการขาย เปลี่ยนรหัสและผูกอีเมลได้ทันที</span>
-      <span class="text-hairline shrink-0">•</span>
-
       <span class="mx-6 inline-flex items-center gap-2 text-ink shrink-0 whitespace-nowrap">
         <span class="text-launchOrange font-semibold">ใหม่</span>
-        ระบบจัดส่งไอดีและบริการอัตโนมัติ 24 ชม. ได้รับรหัสทันทีหลังชำระเงิน
+        ทีมงานตรวจสอบการชำระเงินและส่งมอบทุกออเดอร์
       </span>
       <span class="text-hairline shrink-0">•</span>
-      <span class="mx-6 shrink-0 whitespace-nowrap">🔒 รับประกันทุกไอดี ปลอดภัย ไม่เสี่ยงโดนแบน บัญชีสะอาด 100%</span>
+      <span class="mx-6 text-appleBlue font-medium shrink-0 whitespace-nowrap">โค้ดส่วนลด: TACTICAL ลด 50 บาท | ARENA10 ลด 10%</span>
       <span class="text-hairline shrink-0">•</span>
-      <span class="mx-6 text-appleBlue font-medium shrink-0 whitespace-nowrap">🎁 โค้ดส่วนลด: TACTICAL ลด 50 บาท | ARENA10 ลด 10%</span>
+      <span class="mx-6 shrink-0 whitespace-nowrap">ติดต่อฝ่ายสนับสนุนทาง Line ID: @tacticalstore</span>
       <span class="text-hairline shrink-0">•</span>
-      <span class="mx-6 text-ink shrink-0 whitespace-nowrap">คลังสต็อกไอดีพร้อมส่ง Arena Breakout อันดับ 1</span>
+      <span class="mx-6 inline-flex items-center gap-2 text-ink shrink-0 whitespace-nowrap">
+        <span class="text-launchOrange font-semibold">ใหม่</span>
+        ทีมงานตรวจสอบการชำระเงินและส่งมอบทุกออเดอร์
+      </span>
       <span class="text-hairline shrink-0">•</span>
-      <span class="mx-6 shrink-0 whitespace-nowrap">🔒 มีประกันหลังการขาย เปลี่ยนรหัสและผูกอีเมลได้ทันที</span>
+      <span class="mx-6 text-appleBlue font-medium shrink-0 whitespace-nowrap">โค้ดส่วนลด: TACTICAL ลด 50 บาท | ARENA10 ลด 10%</span>
+      <span class="text-hairline shrink-0">•</span>
+      <span class="mx-6 shrink-0 whitespace-nowrap">ติดต่อฝ่ายสนับสนุนทาง Line ID: @tacticalstore</span>
+      <span class="text-hairline shrink-0">•</span>
+      <span class="mx-6 inline-flex items-center gap-2 text-ink shrink-0 whitespace-nowrap">
+        <span class="text-launchOrange font-semibold">ใหม่</span>
+        ทีมงานตรวจสอบการชำระเงินและส่งมอบทุกออเดอร์
+      </span>
+      <span class="text-hairline shrink-0">•</span>
+      <span class="mx-6 text-appleBlue font-medium shrink-0 whitespace-nowrap">โค้ดส่วนลด: TACTICAL ลด 50 บาท | ARENA10 ลด 10%</span>
+      <span class="text-hairline shrink-0">•</span>
+      <span class="mx-6 shrink-0 whitespace-nowrap">ติดต่อฝ่ายสนับสนุนทาง Line ID: @tacticalstore</span>
       <span class="text-hairline shrink-0">•</span>
     </div>
   </div>
@@ -247,7 +242,7 @@
     <nav class="max-w-[1200px] mx-auto px-4 sm:px-6 h-11 flex justify-between items-center text-xs">
       
       <!-- Brand Logo -->
-      <div onclick="navigateTo('store')" class="flex items-center gap-2 cursor-pointer group">
+      <button type="button" onclick="navigateTo('store')" aria-label="TACTICAL STORE หน้าแรก" class="flex items-center gap-2 group">
         <div class="w-6 h-6 rounded-full bg-ink text-gallery flex items-center justify-center font-bold text-xs group-hover:bg-pricingBlue transition-colors">
           <svg class="w-3.5 h-3.5 stroke-gallery fill-none" stroke-width="2.5" viewBox="0 0 24 24">
             <circle cx="12" cy="12" r="9"/>
@@ -256,9 +251,9 @@
         </div>
         <div class="flex items-baseline gap-1">
           <span class="font-heading font-semibold text-sm text-ink">TACTICAL</span>
-          <span class="text-[10px] text-slate font-normal uppercase tracking-wider">Store</span>
+          <span class="hidden sm:inline text-[10px] text-slate font-normal uppercase tracking-wider">Store</span>
         </div>
-      </div>
+      </button>
 
       <!-- Center Desktop Navigation Links -->
       <div class="hidden md:flex items-center gap-7 text-[12px]">
@@ -273,11 +268,6 @@
         <a href="front/account.html" class="text-slate hover:text-ink transition-colors flex items-center gap-1">
           <span>บัญชีผู้ใช้</span>
         </a>
-
-        <div id="firebase-status-badge" class="flex items-center gap-1.5 text-steel text-[11px]">
-          <span id="firebase-status-dot" class="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
-          <span id="firebase-status-text">Cloud Sync</span>
-        </div>
       </div>
 
       <!-- Action Area -->
@@ -286,7 +276,7 @@
           <input 
             id="search-input" 
             type="text" 
-            placeholder="ค้นหาไอดี ปืน ทรัพยากร..." 
+            aria-label="ค้นหาสินค้า" placeholder="ค้นหาไอดี ปืน ทรัพยากร..." 
             oninput="handleSearch(this.value)"
             class="bg-gallery border border-steel rounded-input pl-8 pr-4 py-1 text-[12px] text-ink placeholder-steel focus:outline-none focus:border-pricingBlue w-44 lg:w-56 transition-all"
           />
@@ -295,18 +285,18 @@
           </svg>
         </div>
 
-        <button type="button" onclick="triggerToast('ระบบจัดส่งออเดอร์ทันทีทีละรายการ (Instant Checkout)')" class="flex items-center gap-1.5 px-3 py-1 rounded-button text-[12px] text-slate hover:text-ink bg-mist transition-colors">
+        <button type="button" onclick="triggerToast('สั่งซื้อได้ครั้งละหนึ่งรายการ')" aria-label="ยอดรวมออเดอร์" class="flex items-center gap-1.5 px-3 py-1 rounded-button text-[12px] text-slate hover:text-ink bg-mist transition-colors">
           <svg class="w-3.5 h-3.5 text-slate" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z"/>
           </svg>
-          <span id="nav-cart-text" class="font-medium text-ink">฿0.00</span>
+          <span id="nav-cart-text" class="hidden sm:inline font-medium text-ink">฿0.00</span>
         </button>
 
         <div id="auth-logged-out" class="flex items-center gap-2">
-          <a href="front/login.html?mode=login" class="text-slate hover:text-ink text-[12px] px-2 py-1 transition-colors">
+          <a href="front/login.html?mode=login" class="text-slate hover:text-ink text-[12px] px-2 py-1 transition-colors whitespace-nowrap">
             เข้าสู่ระบบ
           </a>
-          <a href="front/login.html?mode=register" class="apple-pricing-pill px-3.5 py-1">
+          <a href="front/login.html?mode=register" class="apple-pricing-pill px-3.5 py-1 whitespace-nowrap">
             สมัครสมาชิก
           </a>
         </div>
@@ -319,7 +309,7 @@
             <span id="user-display-name" class="font-medium max-w-[80px] truncate">Agent</span>
           </a>
 
-          <button type="button" onclick="handleSignOut()" class="text-steel hover:text-launchOrange p-1 transition-colors" title="ออกจากระบบ">
+          <button type="button" aria-label="ออกจากระบบ" onclick="handleSignOut()" class="text-steel hover:text-launchOrange p-1 transition-colors" title="ออกจากระบบ">
             <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"/></svg>
           </button>
         </div>
@@ -329,11 +319,9 @@
   </header>
 
   <!-- Apple-Style Promotional Ribbon Banner Strip -->
-  <div id="apple-promo-ribbon" class="bg-mist border-b border-hairline py-3 px-4 text-center text-xs text-slate relative z-30">
+  <div id="apple-promo-ribbon" class="hidden bg-mist border-b border-hairline py-3 px-4 text-center text-xs text-slate relative z-30">
     <div class="max-w-4xl mx-auto flex flex-col sm:flex-row items-center justify-center gap-1.5 sm:gap-2 leading-relaxed">
-      <span id="ribbon-main-text" class="text-ink font-normal">
-        จ่ายดอกเบี้ย 0% นานสูงสุด 10 เดือน* สำหรับผลิตภัณฑ์และแพ็กเกจ Tactical Store ใหม่ของคุณ
-      </span>
+      <span id="ribbon-main-text" class="text-ink font-normal"></span>
       <a href="#catalog-section" id="ribbon-link" class="text-appleBlue hover:underline font-medium inline-flex items-center gap-0.5 whitespace-nowrap">
         <span id="ribbon-link-text">เลือกซื้อ</span>
         <span class="text-xs select-none">›</span>
@@ -348,16 +336,16 @@
     <section class="bg-gallery pt-16 pb-20 md:pt-24 md:pb-28">
       <div class="max-w-[1000px] mx-auto px-4 sm:px-6 text-center">
         
-        <p class="text-launchOrange text-[12px] font-semibold mb-3">
-          Arena Breakout Instant Market
+        <p class="text-ink text-[21px] leading-none font-heading font-semibold tracking-[0.231px] mb-4">
+          Arena Breakout Market
         </p>
         
-        <h1 class="text-4xl sm:text-6xl md:text-[80px] font-heading font-semibold text-ink leading-[1.08] tracking-[-0.015em] mb-5">
+        <h1 class="text-[44px] sm:text-6xl md:text-[80px] font-heading font-semibold text-ink leading-[1.05] tracking-[-0.02em] md:tracking-[-1.2px] mb-5">
           Your Next Gear.<br/>Starts Here.
         </h1>
         
-        <p class="text-slate text-[17px] leading-[1.55] max-w-2xl mx-auto mb-8 font-normal">
-          ศูนย์รวมไอดีคุณภาพสูง คลังกระสุน T6 มูลค่า Koen มหาศาล และบริการโยนของ Arena Breakout จัดส่งอัตโนมัติภายใน 3 วินาที พร้อมประกันบัญชี 100%
+        <p class="text-slate text-[17px] leading-[1.55] tracking-[-0.374px] max-w-2xl mx-auto mb-8 font-normal">
+          ศูนย์รวมไอดีและบริการโยนของ Arena Breakout ทีมงานตรวจสอบการชำระเงินและส่งมอบให้ทุกออเดอร์ ติดตามสถานะและรับไอดีได้ในเมนูออเดอร์ของฉัน
         </p>
         
         <div class="flex items-center justify-center gap-3">
@@ -375,22 +363,22 @@
 
     <!-- Highlights Metric Stage -->
     <section class="bg-mist py-12 border-y border-hairline">
-      <div class="max-w-[1100px] mx-auto px-4 sm:px-6 grid grid-cols-2 md:grid-cols-4 gap-8 text-center">
-        <div>
-          <div id="hero-stat1-val" class="text-2xl sm:text-3xl font-heading font-semibold text-ink">45,200+</div>
-          <div id="hero-stat1-lbl" class="text-xs text-slate mt-1.5 font-normal">สมาชิกในระบบ</div>
+      <div class="max-w-[1100px] mx-auto px-4 sm:px-6 flex flex-wrap justify-center gap-x-16 gap-y-8 text-center">
+        <div class="hidden">
+          <div id="hero-stat1-val" class="text-2xl sm:text-3xl font-heading font-semibold text-ink"></div>
+          <div id="hero-stat1-lbl" class="text-xs text-slate mt-1.5 font-normal"></div>
         </div>
         <div>
-          <div id="hero-instock-count" class="text-2xl sm:text-3xl font-heading font-semibold text-appleBlue">208</div>
+          <div id="hero-instock-count" class="text-2xl sm:text-3xl font-heading font-semibold text-ink">0</div>
           <div id="hero-stat2-lbl" class="text-xs text-slate mt-1.5 font-normal">ไอดีและคิวพร้อมส่ง</div>
         </div>
-        <div>
-          <div id="hero-stat3-val" class="text-2xl sm:text-3xl font-heading font-semibold text-ink">89,500+</div>
-          <div id="hero-stat3-lbl" class="text-xs text-slate mt-1.5 font-normal">ออเดอร์สำเร็จ</div>
+        <div class="hidden">
+          <div id="hero-stat3-val" class="text-2xl sm:text-3xl font-heading font-semibold text-ink"></div>
+          <div id="hero-stat3-lbl" class="text-xs text-slate mt-1.5 font-normal"></div>
         </div>
-        <div>
-          <div id="hero-stat4-val" class="text-2xl sm:text-3xl font-heading font-semibold text-ink">~3 วินาที</div>
-          <div id="hero-stat4-lbl" class="text-xs text-slate mt-1.5 font-normal">เวลาจัดส่งเฉลี่ย</div>
+        <div class="hidden">
+          <div id="hero-stat4-val" class="text-2xl sm:text-3xl font-heading font-semibold text-ink"></div>
+          <div id="hero-stat4-lbl" class="text-xs text-slate mt-1.5 font-normal"></div>
         </div>
       </div>
     </section>
@@ -420,7 +408,7 @@
             <input 
               id="search-input-mobile" 
               type="text" 
-              placeholder="ค้นหาไอดี ปืน ทรัพยากร..." 
+              aria-label="ค้นหาสินค้า" placeholder="ค้นหาไอดี ปืน ทรัพยากร..." 
               oninput="handleSearch(this.value)"
               class="w-full bg-gallery border border-steel rounded-input pl-8 pr-4 py-1.5 text-xs text-ink placeholder-steel focus:outline-none focus:border-pricingBlue"
             />
@@ -431,12 +419,12 @@
 
           <div class="grid grid-cols-1 sm:flex items-center gap-2.5 w-full sm:w-auto">
             <!-- 1. Category Select -->
-            <select id="category-select" onchange="filterCategory(this.value)" class="apple-select-pill">
+            <select id="category-select" aria-label="หมวดหมู่" onchange="filterCategory(this.value)" class="apple-select-pill">
               <option value="all">หมวดหมู่: ทั้งหมด</option>
             </select>
 
             <!-- 2. Combined Stock & Budget Select -->
-            <select id="smart-filter-select" onchange="handleSmartFilterChange(this.value)" class="apple-select-pill">
+            <select id="smart-filter-select" aria-label="ตัวกรอง" onchange="handleSmartFilterChange(this.value)" class="apple-select-pill">
               <option value="all">ตัวกรอง: ทั้งหมด</option>
               <option value="instock">เฉพาะสินค้าพร้อมส่ง</option>
               <option value="under200">พร้อมส่ง • งบไม่เกิน ฿200</option>
@@ -445,7 +433,7 @@
             </select>
 
             <!-- 3. Sort Select -->
-            <select id="sort-select" onchange="handleSortChange(this.value)" class="apple-select-pill">
+            <select id="sort-select" aria-label="เรียงตาม" onchange="handleSortChange(this.value)" class="apple-select-pill">
               <option value="default">เรียงตาม: แนะนำ</option>
               <option value="price-asc">ราคา: น้อยไปมาก</option>
               <option value="price-desc">ราคา: มากไปน้อย</option>
@@ -472,39 +460,13 @@
         <svg class="w-10 h-10 text-steel mb-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
         </svg>
-        <h3 class="text-base font-semibold text-ink mb-1">ไม่พบสินค้าที่ตรงกับตัวกรอง</h3>
+        <h3 id="empty-title" class="text-base font-semibold text-ink mb-1">ไม่พบสินค้าที่ตรงกับตัวกรอง</h3>
         <p class="text-slate text-xs">กรุณาลองเปลี่ยนหมวดหมู่ ช่วงงบประมาณ หรือคำค้นหา</p>
         <button type="button" onclick="clearSearchAndFilters()" class="mt-4 text-xs font-medium text-appleBlue hover:underline">
           ล้างตัวกรองทั้งหมด
         </button>
       </div>
     </main>
-
-    <!-- Editorial Partner Showcase Band -->
-    <section class="bg-mist border-y border-hairline py-16 md:py-[90px]">
-      <div class="max-w-[1200px] mx-auto px-4 sm:px-6">
-        <div class="apple-card p-8 md:p-14 flex flex-col md:flex-row items-center justify-between gap-8">
-          <div>
-            <span class="text-launchOrange text-xs font-semibold block mb-2">Official Partner</span>
-            <h3 class="text-2xl sm:text-4xl font-heading font-semibold text-ink leading-[1.2] mb-3">
-              Tactical Topup &amp; Pass
-            </h3>
-            <p class="text-slate text-sm max-w-lg leading-relaxed">
-              บริการเติมพันธบัตรและสิทธิพิเศษ Arena Breakout แท้ เติมตรงผ่าน UID สะอาด ปลอดภัย 100% ไร้ความเสี่ยงติดลบ
-            </p>
-          </div>
-          
-          <div class="flex flex-col sm:flex-row gap-3 w-full md:w-auto shrink-0">
-            <button type="button" onclick="triggerToast('เปิดบริการเติมเกมพันธมิตรเร็วๆ นี้')" class="apple-pricing-pill px-6 py-3 text-xs">
-              เติมเกม Arena Breakout
-            </button>
-            <a href="front/category.html" class="apple-explore-pill px-6 py-3 text-xs text-center">
-              ดูคลังสินค้าทั้งหมด
-            </a>
-          </div>
-        </div>
-      </div>
-    </section>
 
     <!-- How It Works Section -->
     <section class="py-16 md:py-[90px] bg-gallery">
@@ -524,13 +486,13 @@
           <div class="apple-card p-7 bg-mist">
             <div class="text-slate font-heading font-semibold text-sm mb-4">02</div>
             <h3 class="text-base font-semibold text-ink mb-2">ชำระผ่าน PromptPay หรือซอง TrueMoney</h3>
-            <p class="text-slate text-xs leading-relaxed">สแกน QR Code หรือกรอกลิงก์ซองของขวัญ ระบบตรวจยอดเงินและตัดสต็อกอัตโนมัติภายใน 3 วินาที</p>
+            <p class="text-slate text-xs leading-relaxed">โอนตามยอดที่แสดงหรือส่งลิงก์ซองของขวัญ แล้วกดแจ้งชำระเงินพร้อมเวลาหรือเลขอ้างอิง</p>
           </div>
 
           <div class="apple-card p-7 bg-mist">
             <div class="text-slate font-heading font-semibold text-sm mb-4">03</div>
-            <h3 class="text-base font-semibold text-ink mb-2">รับรหัสทันทีและดูย้อนหลังได้ตลอดเวลา</h3>
-            <p class="text-slate text-xs leading-relaxed">รับ Username &amp; Password หรือเลขคิวนัดรับงานบริการทันทีบนหน้าจอ พร้อมเก็บสำเนาในเมนูออเดอร์ของฉัน</p>
+            <h3 class="text-base font-semibold text-ink mb-2">ทีมงานตรวจสอบและส่งมอบ</h3>
+            <p class="text-slate text-xs leading-relaxed">เมื่อยืนยันยอดแล้ว ไอดีหรือคิวบริการจะแสดงในเมนูออเดอร์ของฉัน ติดตามสถานะได้ตลอดเวลา</p>
           </div>
         </div>
       </div>
@@ -541,7 +503,7 @@
       <div class="max-w-[1200px] mx-auto px-4 sm:px-6 flex flex-col md:flex-row justify-between items-center gap-6 text-center md:text-left">
         <div>
           <div class="font-heading font-semibold text-sm text-ink mb-1">TACTICAL STORE</div>
-          <p>© 2026 Tactical Store — ระบบจำหน่ายไอดีและทรัพยากรเกม Arena Breakout อัตโนมัติ 24 ชม.</p>
+          <p>© 2026 Tactical Store — ร้านจำหน่ายไอดีและทรัพยากรเกม Arena Breakout</p>
         </div>
         <div class="flex flex-wrap justify-center gap-6">
           <button type="button" onclick="navigateTo('store')" class="hover:text-appleBlue transition-colors">หน้าหลัก</button>
@@ -569,14 +531,14 @@
         <div class="lg:col-span-5 apple-card p-6 md:p-7">
           <div class="flex items-center justify-between mb-6 pb-3 border-b border-hairline">
             <h2 class="text-xs font-semibold text-slate uppercase tracking-wider">สรุปคำสั่งซื้อ</h2>
-            <span class="text-[10px] bg-mist text-pricingBlue border border-hairline px-2.5 py-0.5 rounded-full font-mono font-medium">
-              LOCKING STOCK
+            <span class="text-[10px] bg-mist text-slate border border-hairline px-2.5 py-0.5 rounded-full font-medium">
+              รอชำระเงิน
             </span>
           </div>
           
           <div class="flex flex-col gap-4 mb-5">
             <div class="aspect-video w-full rounded-images overflow-hidden border border-hairline relative bg-mist">
-              <img id="checkout-product-img" src="" alt="Product" class="w-full h-full object-cover" onerror="this.src='https://placehold.co/800x500/f5f5f7/86868b?text=Arena+Breakout'">
+              <img id="checkout-product-img" src="" alt="Product" class="w-full h-full object-cover" onerror="this.onerror=null;this.src='https://placehold.co/800x500/f5f5f7/86868b?text=Arena+Breakout'">
               <div id="checkout-product-koen" class="absolute top-2.5 left-2.5 bg-gallery/90 px-2.5 py-0.5 rounded-full text-[11px] font-semibold text-ink border border-hairline">
                 Koen: -
               </div>
@@ -602,6 +564,7 @@
               <input 
                 id="checkout-service-target" 
                 type="text" 
+                maxlength="100" 
                 placeholder="กรอกชื่อตัวละคร หรือ UID / Line ID..." 
                 class="w-full bg-gallery border border-steel rounded-input px-3.5 py-1.5 text-xs text-ink focus:outline-none focus:border-pricingBlue"
               />
@@ -611,7 +574,7 @@
           <!-- Promo Code Input -->
           <div class="pt-4 border-t border-hairline mb-6">
             <div class="text-xs font-medium text-slate mb-2 flex items-center justify-between">
-              <span>🏷️ โค้ดส่วนลด (TACTICAL หรือ ARENA10)</span>
+              <span>โค้ดส่วนลด (TACTICAL หรือ ARENA10)</span>
               <span id="promo-rate-warning" class="hidden text-[10px] text-launchOrange font-semibold">กรอกถี่เกินไป</span>
             </div>
             <div class="flex gap-2">
@@ -643,23 +606,17 @@
             </div>
             <div class="flex justify-between items-end pt-4 border-t border-hairline mt-4">
               <span class="text-xs text-ink font-semibold">ยอดสุทธิที่ต้องชำระ</span>
-              <span id="checkout-final-price" class="text-2xl sm:text-3xl font-heading font-semibold text-pricingBlue">
+              <span id="checkout-final-price" class="text-2xl sm:text-3xl font-heading font-semibold text-ink">
                 ฿0.00
               </span>
             </div>
           </div>
+          <p class="text-[11px] text-steel leading-relaxed mt-4">การซื้อขายบัญชีหรือทรัพยากรในเกมอาจขัดต่อข้อกำหนดของผู้พัฒนาเกม และมีความเสี่ยงที่บัญชีจะถูกระงับ ทางร้านไม่สามารถรับประกันได้</p>
         </div>
 
         <!-- Right: Payment Hub Card -->
         <div class="lg:col-span-7 apple-card p-6 md:p-7 flex flex-col items-center relative overflow-hidden">
           
-          <div class="w-full bg-mist border border-hairline text-slate text-xs py-2 px-4 rounded-button flex items-center justify-center gap-2 mb-6">
-            <span>⏱️</span>
-            <span>กรุณาชำระเงินและกดยืนยันภายใน</span>
-            <span id="checkout-timer" class="font-mono text-ink font-semibold">10:00</span>
-            <span>นาที</span>
-          </div>
-
           <div class="mb-6 flex bg-mist p-1 rounded-button w-full max-w-sm border border-hairline">
             <button id="btn-tab-promptpay" type="button" onclick="switchPaymentTab('promptpay')" class="flex-1 py-1.5 rounded-button text-xs font-medium flex items-center justify-center gap-2 transition-all bg-gallery text-ink">
               PromptPay QR
@@ -673,39 +630,43 @@
           <div id="payment-promptpay-panel" class="flex flex-col items-center w-full">
             <div class="text-center mb-5">
               <h3 class="text-lg font-heading font-semibold text-ink">สแกนชำระผ่านพร้อมเพย์</h3>
-              <p class="text-slate text-xs mt-0.5">ระบบ SlipOK ตรวจสอบอัตโนมัติ รวดเร็ว ปลอดภัย</p>
+              <p class="text-slate text-xs mt-0.5">โอนตามยอดที่แสดง แล้วกรอกเวลาหรือเลขอ้างอิงด้านล่างเพื่อแจ้งชำระ</p>
             </div>
 
-            <div class="bg-gallery p-4 rounded-card border border-hairline mb-5 relative group">
-              <div id="qr-box-content" class="w-52 h-52 bg-mist rounded-2xl flex flex-col items-center justify-center border border-dashed border-steel/40 relative overflow-hidden">
-                <svg class="w-16 h-16 text-steel mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 4v1m6 11h2m-6 0h-2v4m0-11v3m0 0h.01M12 12h4.01M16 20h4M4 12h4m12 0h.01M5 8h2a1 1 0 001-1V5a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1zm12 0h2a1 1 0 001-1V5a1 1 0 00-1-1h-2a1 1 0 00-1 1v2a1 1 0 001 1zM5 20h2a1 1 0 001-1v-2a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1z"/>
-                </svg>
-                <span class="text-[10px] text-slate font-medium">PROMPTPAY THAILAND</span>
-                <span id="qr-amount-label" class="text-sm font-semibold text-ink mt-0.5">฿0.00</span>
-                
-                <div class="absolute inset-0 bg-gallery/95 opacity-0 group-hover:opacity-100 transition-opacity flex flex-col items-center justify-center p-4 text-center">
-                  <p class="text-slate text-xs mb-2">ทดสอบระบบ</p>
-                  <button type="button" onclick="simulateOrderSuccess()" class="apple-pricing-pill px-4 py-2 text-xs">
-                    [จำลอง] โอนเงินสำเร็จ
-                  </button>
-                </div>
+            <div class="bg-gallery p-4 rounded-card border border-hairline mb-5 flex flex-col items-center">
+              <div class="w-52 h-52 bg-mist rounded-nav flex items-center justify-center border border-dashed border-steel/40 overflow-hidden">
+                <img id="qr-img" src="" alt="QR พร้อมเพย์ของร้าน" class="hidden w-full h-full object-contain bg-gallery">
+                <span id="qr-placeholder" class="text-[11px] text-slate text-center px-6">ร้านยังไม่ได้ตั้งค่า QR พร้อมเพย์</span>
               </div>
+              <span id="qr-amount-label" class="text-sm font-semibold text-ink mt-3">฿0.00</span>
             </div>
 
             <div class="w-full max-w-sm space-y-2 text-xs">
-              <div class="flex items-center justify-between bg-mist px-4 py-2 rounded-button border border-hairline">
-                <span class="text-slate">ชื่อบัญชี:</span>
-                <span class="text-ink font-medium">บจก. แทคติคอล สโตร์ (ไทยแลนด์)</span>
+              <div class="hidden">
+                <div class="flex items-center justify-between bg-mist px-4 py-2 rounded-button border border-hairline">
+                  <span class="text-slate">ชื่อบัญชี:</span>
+                  <span id="promptpay-account-name" class="text-ink font-medium">-</span>
+                </div>
               </div>
               <div class="flex items-center justify-between bg-mist px-4 py-2 rounded-button border border-hairline">
                 <span class="text-slate">ยอดที่ต้องชำระ:</span>
-                <span id="promptpay-sum-label" class="text-pricingBlue font-semibold text-sm">฿0.00</span>
+                <span id="promptpay-sum-label" class="text-ink font-semibold text-sm">฿0.00</span>
               </div>
             </div>
 
-            <button id="btn-verify-promptpay" type="button" onclick="simulateOrderSuccess()" class="mt-6 w-full max-w-sm apple-pricing-pill py-3 text-sm">
-              ยืนยันการโอนเงิน (ตรวจสลิปอัตโนมัติ)
+            <div class="w-full max-w-sm mt-4">
+              <label for="payment-ref-input" class="block text-xs font-medium text-slate mb-1.5">เวลาที่โอน หรือเลขอ้างอิงรายการ:</label>
+              <input
+                id="payment-ref-input"
+                type="text"
+                maxlength="100"
+                placeholder="เช่น 14:32 หรือเลขอ้างอิงในสลิป"
+                class="w-full bg-gallery border border-steel rounded-input px-4 py-2.5 text-xs text-ink focus:outline-none focus:border-pricingBlue"
+              />
+            </div>
+
+            <button id="btn-submit-promptpay" type="button" onclick="submitOrder()" class="mt-6 w-full max-w-sm apple-pricing-pill py-3 text-sm">
+              แจ้งชำระเงิน
             </button>
           </div>
 
@@ -721,17 +682,18 @@
               <input 
                 id="voucher-url-input" 
                 type="url" 
+                maxlength="300" 
                 placeholder="https://gift.truemoney.com/campaign/..." 
                 class="w-full bg-gallery border border-steel rounded-input px-4 py-2.5 text-xs text-ink focus:outline-none focus:border-pricingBlue"
               />
             </div>
 
-            <div class="bg-mist border border-hairline rounded-2xl p-4 text-xs text-slate mb-6 text-left leading-relaxed">
-              💡 <strong>วิธีทำ:</strong> เข้าแอป TrueMoney &gt; โอนเงิน &gt; ส่งซองของขวัญ &gt; ใส่ยอด <strong id="voucher-exact-amount" class="text-ink">฿0.00</strong> (แบ่ง 1 คน) แล้วนำลิงก์มาวาง
+            <div class="bg-mist border border-hairline rounded-nav p-4 text-xs text-slate mb-6 text-left leading-relaxed">
+              <strong>วิธีทำ:</strong> เข้าแอป TrueMoney &gt; โอนเงิน &gt; ส่งซองของขวัญ &gt; ใส่ยอด <strong id="voucher-exact-amount" class="text-ink">฿0.00</strong> (แบ่ง 1 คน) แล้วนำลิงก์มาวาง
             </div>
 
-            <button type="button" onclick="simulateVoucherPayment()" class="w-full apple-pricing-pill py-3 text-sm">
-              ยืนยันและรับไอดีทันที
+            <button id="btn-submit-truemoney" type="button" onclick="submitOrder()" class="w-full apple-pricing-pill py-3 text-sm">
+              แจ้งชำระเงิน
             </button>
           </div>
 
@@ -751,10 +713,10 @@
       </div>
       
       <h1 class="text-3xl sm:text-4xl font-heading font-semibold text-ink mb-2">
-        Order Fulfilled
+        ได้รับคำสั่งซื้อแล้ว
       </h1>
       <p class="text-slate text-sm mb-8">
-        ชำระเงินสำเร็จ ระบบได้จัดสรรข้อมูลคำสั่งซื้อให้คุณเรียบร้อยแล้ว
+        ทีมงานกำลังตรวจสอบการชำระเงิน เมื่อยืนยันแล้วไอดีหรือคิวบริการจะแสดงในเมนูออเดอร์ของฉัน
       </p>
 
       <!-- Credentials / Service Vault Card -->
@@ -767,50 +729,24 @@
             <h3 id="success-product-name" class="text-base font-semibold text-ink">แพ็กเกจไอดีของคุณ</h3>
           </div>
           <div class="bg-mist border border-hairline text-appleBlue px-3 py-0.5 rounded-full text-xs font-medium">
-            จัดสรรสำเร็จ
+            รอตรวจสอบ
           </div>
-        </div>
-
-        <!-- Account Credentials Container -->
-        <div id="success-account-box" class="bg-mist border border-hairline rounded-2xl p-5 mb-5">
-          <div class="flex justify-between items-center mb-2">
-            <span class="text-[11px] font-semibold text-slate uppercase tracking-wider">Login Credentials</span>
-            <button type="button" onclick="togglePasswordVisibility()" class="text-xs text-appleBlue hover:underline font-medium">
-              <span id="pw-toggle-label">แสดงรหัสผ่าน</span>
-            </button>
-          </div>
-
-          <div class="space-y-2 font-mono text-xs">
-            <div class="flex items-center gap-2 bg-gallery p-2.5 rounded-xl border border-hairline">
-              <span class="text-slate w-20">USERNAME:</span>
-              <span id="acc-username" class="text-ink font-semibold select-all">ArenaAgent9910</span>
-            </div>
-            <div class="flex items-center gap-2 bg-gallery p-2.5 rounded-xl border border-hairline">
-              <span class="text-slate w-20">PASSWORD:</span>
-              <span id="acc-password" class="text-ink font-semibold select-all">••••••••••••••••</span>
-            </div>
-          </div>
-
-          <button type="button" onclick="copyCredentials()" class="mt-3.5 w-full apple-explore-pill py-2.5 bg-gallery text-xs flex items-center justify-center gap-2">
-            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3"/></svg>
-            <span id="copy-btn-text">คัดลอก Username &amp; Password ทั้งหมด</span>
-          </button>
         </div>
 
         <!-- Service Queue Container (Hidden for normal accounts) -->
-        <div id="success-service-box" class="hidden bg-mist border border-hairline rounded-2xl p-5 mb-5 space-y-2 text-xs">
-          <div class="text-[11px] font-semibold text-appleBlue uppercase tracking-wider">⚡ คิวงานบริการในเกม (In-Game Safe Drop)</div>
-          <div class="bg-gallery p-3 rounded-xl border border-hairline space-y-1.5">
+        <div id="success-service-box" class="hidden bg-mist border border-hairline rounded-nav p-5 mb-5 space-y-2 text-xs">
+          <div class="text-[11px] font-semibold text-slate uppercase tracking-wider">คิวงานบริการในเกม</div>
+          <div class="bg-gallery p-3 rounded-links border border-hairline space-y-1.5">
             <div class="flex justify-between"><span class="text-slate">ผู้รับบริการ (UID/ชื่อในเกม):</span><span id="srv-target-display" class="font-mono font-semibold text-ink">-</span></div>
-            <div class="flex justify-between"><span class="text-slate">จำนวนที่สั่งซื้อ:</span><span id="srv-qty-display" class="font-semibold text-pricingBlue">-</span></div>
+            <div class="flex justify-between"><span class="text-slate">จำนวนที่สั่งซื้อ:</span><span id="srv-qty-display" class="font-semibold text-ink">-</span></div>
           </div>
-          <p class="text-slate text-[11px] pt-1">ทีมงานได้รับคิวของคุณแล้ว กรุณาเตรียมตัวเข้าห้องนัดหมายหรือทัก Line ID: <strong>@tacticalstore</strong> พร้อมแจ้งเลข Order ID</p>
+          <p class="text-slate text-[11px] pt-1">ทีมงานจะติดต่อเพื่อนัดรับหลังยืนยันการชำระเงิน หากต้องการสอบถามทัก Line ID: <strong>@tacticalstore</strong> พร้อมแจ้งเลข Order ID</p>
         </div>
 
-        <div class="space-y-1 bg-mist p-3.5 rounded-xl border border-hairline text-xs text-slate">
+        <div class="space-y-1 bg-mist p-3.5 rounded-links border border-hairline text-xs text-slate">
           <div class="font-medium text-ink mb-1">คำแนะนำความปลอดภัย:</div>
-          <p>• กรุณาเข้าสู่ระบบและเปลี่ยนรหัสผ่านทันทีหลังรับไอดี</p>
-          <p>• ข้อมูลออเดอร์นี้ถูกบันทึกไว้ในเมนู <strong>"ออเดอร์ของฉัน"</strong> สามารถเปิดดูย้อนหลังได้ตลอดเวลา</p>
+          <p>• เมื่อได้รับไอดีแล้ว กรุณาเข้าสู่ระบบและเปลี่ยนรหัสผ่านทันที</p>
+          <p>• สถานะคำสั่งซื้ออัปเดตในเมนู <strong>ออเดอร์ของฉัน</strong> โดยอัตโนมัติ</p>
         </div>
       </div>
 
@@ -826,14 +762,14 @@
   </div>
 
   <!-- MODAL: PRODUCT DETAIL MODAL -->
-  <div id="product-detail-modal" class="fixed inset-0 z-50 hidden items-center justify-center p-4 bg-ink/30 backdrop-blur-md">
+  <div id="product-detail-modal" role="dialog" aria-modal="true" aria-label="รายละเอียดสินค้า" class="fixed inset-0 z-50 hidden items-center justify-center p-4 bg-ink/30 backdrop-blur-md">
     <div class="apple-card max-w-lg w-full p-6 sm:p-7 relative max-h-[90vh] overflow-y-auto bg-gallery">
-      <button type="button" onclick="closeDetailModal()" class="absolute top-4 right-4 text-steel hover:text-ink p-1.5 rounded-full hover:bg-mist transition-colors">
+      <button type="button" aria-label="ปิด" onclick="closeDetailModal()" class="absolute top-4 right-4 text-steel hover:text-ink p-1.5 rounded-full hover:bg-mist transition-colors">
         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
       </button>
 
       <div class="aspect-video w-full rounded-images overflow-hidden mb-3 border border-hairline bg-mist relative">
-        <img id="modal-img" src="" alt="Detail" class="w-full h-full object-cover" onerror="this.src='https://placehold.co/800x500/f5f5f7/86868b?text=Arena+Breakout'">
+        <img id="modal-img" src="" alt="Detail" class="w-full h-full object-cover" onerror="this.onerror=null;this.src='https://placehold.co/800x500/f5f5f7/86868b?text=Arena+Breakout'">
         <div id="modal-img-counter" class="absolute bottom-2 right-2 bg-gallery/90 border border-hairline px-2 py-0.5 rounded-full text-[10px] font-mono text-slate">
           ภาพ 1 / 1
         </div>
@@ -853,7 +789,7 @@
       <h3 id="modal-title" class="text-xl font-heading font-semibold text-ink mb-1">-</h3>
       <p id="modal-desc" class="text-slate text-xs leading-relaxed mb-5">-</p>
 
-      <div class="bg-mist border border-hairline p-4 rounded-2xl mb-6">
+      <div class="bg-mist border border-hairline p-4 rounded-nav mb-6">
         <h4 class="text-xs font-semibold text-ink uppercase tracking-wider mb-2">รายละเอียดและอุปกรณ์:</h4>
         <div id="modal-specs" class="grid grid-cols-1 sm:grid-cols-2 gap-2 text-xs text-slate"></div>
       </div>
@@ -861,7 +797,7 @@
       <div class="flex items-center justify-between pt-4 border-t border-hairline gap-3">
         <div>
           <span id="modal-price-label" class="text-[10px] text-slate uppercase font-semibold block mb-0.5">ราคาจำหน่าย</span>
-          <span id="modal-price" class="text-4xl font-heading font-semibold text-pricingBlue leading-none">฿0.00</span>
+          <span id="modal-price" class="text-4xl font-heading font-semibold text-ink leading-none">฿0.00</span>
         </div>
         <button id="modal-buy-btn" type="button" class="apple-pricing-pill px-6 py-2.5 text-xs">
           สั่งซื้อทันที
@@ -871,9 +807,9 @@
   </div>
 
   <!-- MODAL: MY ORDERS MODAL -->
-  <div id="my-orders-modal" class="fixed inset-0 z-50 hidden items-center justify-center p-4 bg-ink/30 backdrop-blur-md">
+  <div id="my-orders-modal" role="dialog" aria-modal="true" aria-label="ประวัติคำสั่งซื้อ" class="fixed inset-0 z-50 hidden items-center justify-center p-4 bg-ink/30 backdrop-blur-md">
     <div class="apple-card max-w-xl w-full p-6 sm:p-7 relative max-h-[85vh] overflow-y-auto bg-gallery">
-      <button type="button" onclick="closeMyOrdersModal()" class="absolute top-4 right-4 text-steel hover:text-ink p-1.5 rounded-full hover:bg-mist transition-colors">
+      <button type="button" aria-label="ปิด" onclick="closeMyOrdersModal()" class="absolute top-4 right-4 text-steel hover:text-ink p-1.5 rounded-full hover:bg-mist transition-colors">
         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
       </button>
 
@@ -884,17 +820,16 @@
       <div id="my-orders-list" class="space-y-3"></div>
 
       <div id="my-orders-empty" class="hidden py-10 text-center flex-col items-center justify-center">
-        <div class="text-3xl mb-2">📦</div>
-        <div class="text-ink font-semibold text-sm mb-1">ยังไม่มีประวัติคำสั่งซื้อ</div>
-        <div class="text-slate text-xs">เมื่อสั่งซื้อสำเร็จ ข้อมูลจะปรากฏที่นี่โดยอัตโนมัติ</div>
+                <div class="text-ink font-semibold text-sm mb-1">ยังไม่มีประวัติคำสั่งซื้อ</div>
+        <div class="text-slate text-xs">เข้าสู่ระบบและสั่งซื้อ ประวัติจะปรากฏที่นี่โดยอัตโนมัติ</div>
       </div>
     </div>
   </div>
 
   <!-- Mobile Bottom Quick Navigation Bar -->
-  <div class="md:hidden fixed bottom-0 left-0 right-0 bg-frost/95 backdrop-blur-xl border-t border-control z-40 pb-safe">
+  <div class="md:hidden fixed bottom-0 left-0 right-0 bg-frost/95 backdrop-blur-xl border-t border-control z-40 pb-[env(safe-area-inset-bottom)]">
     <div class="flex items-center justify-around py-2.5 px-2 text-[11px]">
-      <button type="button" onclick="navigateTo('store')" class="flex flex-col items-center gap-1 font-semibold text-pricingBlue">
+      <button type="button" onclick="navigateTo('store')" class="flex flex-col items-center gap-1 font-semibold text-appleBlue">
         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 12l2-2m0 0l7-7 7 7M5 10v10a1 1 0 001 1h3m10-11l2 2m-2-2v10a1 1 0 01-1 1h-3m-6 0a1 1 0 001-1v-4a1 1 0 011-1h2a1 1 0 011 1v4a1 1 0 001 1m-6 0h6"/></svg>
         <span>หน้าแรก</span>
       </button>

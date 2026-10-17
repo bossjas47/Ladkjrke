@@ -503,6 +503,7 @@
                   <th class="py-3 px-4">ช่องทาง</th>
                   <th class="py-3 px-4">ไอดีที่ส่งมอบ (User / Pass)</th>
                   <th class="py-3 px-4">สถานะ</th>
+                  <th class="py-3 px-4">ดำเนินการ</th>
                 </tr>
               </thead>
               <tbody id="admin-orders-table-body" class="divide-y divide-hairline">
@@ -596,11 +597,11 @@
               </div>
 
               <div>
-                <label class="block text-[11px] text-slate mb-1">ข้อความหลัก (เช่น จ่ายดอกเบี้ย 0% นานสูงสุด 10 เดือน* สำหรับไอดีและแพ็กเกจใหม่ของคุณ):</label>
+                <label class="block text-[11px] text-slate mb-1">ข้อความหลักของแบนเนอร์ (เว้นว่างเพื่อซ่อน):</label>
                 <input 
                   id="setting-ribbon-text" 
                   type="text" 
-                  placeholder="จ่ายดอกเบี้ย 0% นานสูงสุด 10 เดือน* สำหรับผลิตภัณฑ์และแพ็กเกจ Tactical Store ใหม่ของคุณ" 
+                  placeholder="ข้อความแบนเนอร์ (เว้นว่างเพื่อซ่อนแบนเนอร์)" 
                   class="w-full apple-input px-3.5 py-2 text-xs"
                 />
               </div>
@@ -651,7 +652,7 @@
                     <input 
                       id="setting-stat1-val" 
                       type="text" 
-                      placeholder="45,200+" 
+                      placeholder="ใส่เฉพาะตัวเลขจริง หรือเว้นว่างเพื่อซ่อน" 
                       class="w-full apple-input px-3 py-1.5 text-xs font-medium"
                     />
                   </div>
@@ -703,7 +704,7 @@
                     <input 
                       id="setting-stat3-val" 
                       type="text" 
-                      placeholder="89,500+" 
+                      placeholder="ใส่เฉพาะตัวเลขจริง หรือเว้นว่างเพื่อซ่อน" 
                       class="w-full apple-input px-3 py-1.5 text-xs font-medium"
                     />
                   </div>
@@ -729,7 +730,7 @@
                     <input 
                       id="setting-stat4-val" 
                       type="text" 
-                      placeholder="~3 วินาที" 
+                      placeholder="ใส่เฉพาะตัวเลขจริง หรือเว้นว่างเพื่อซ่อน" 
                       class="w-full apple-input px-3 py-1.5 text-xs font-medium"
                     />
                   </div>
@@ -810,6 +811,17 @@
                     placeholder="ใส่ TrueMoney API Key / Secret..." 
                     class="w-full apple-input px-3.5 py-1.5 text-xs font-mono"
                   />
+                </div>
+
+                <div>
+                  <label class="block text-[11px] text-slate mb-1">ลิงก์รูป QR พร้อมเพย์ของร้าน (https):</label>
+                  <input id="setting-promptpay-qr-url" type="url" placeholder="https://..." class="w-full apple-input px-3.5 py-1.5 text-xs font-mono" />
+                  <span class="text-[10px] text-steel block mt-0.5">แสดงในหน้าชำระเงิน ถ้าเว้นว่างจะรับชำระพร้อมเพย์ไม่ได้</span>
+                </div>
+
+                <div>
+                  <label class="block text-[11px] text-slate mb-1">ชื่อบัญชีรับเงิน (แสดงให้ลูกค้าเห็น):</label>
+                  <input id="setting-promptpay-name" type="text" maxlength="100" placeholder="ชื่อบัญชีที่ตรงกับ QR" class="w-full apple-input px-3.5 py-1.5 text-xs" />
                 </div>
 
                 <div>

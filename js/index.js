@@ -1,18 +1,13 @@
 import { db, auth } from "../firebase-config.js";
-import { 
-  collection, 
-  doc, 
-  addDoc, 
-  updateDoc,
-  increment,
-  onSnapshot, 
+import {
+  collection,
+  doc,
+  setDoc,
+  onSnapshot,
   getDoc,
-  getDocs,
   query,
   where,
-  limit,
-  runTransaction,
-  serverTimestamp 
+  serverTimestamp
 } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 import { 
   onAuthStateChanged, 
@@ -22,160 +17,20 @@ import {
 const FALLBACK_IMG = 'https://placehold.co/800x500/f5f5f7/86868b?text=Arena+Breakout';
 
 // ==========================================
-// 1. DEFAULT DATA & REPOSITORY (Synced with Category)
+// 1. CATEGORIES & APP STATE
 // ==========================================
-const DEFAULT_PRODUCTS = [
-  {
-    id: '1',
-    name: 'M4A1 Full Mod + T6 Ammo x300',
-    category: 'ammo_acc',
-    price: 350.00,
-    koenLabel: 'มูลค่า Koen',
-    koen: '5,500,000',
-    stock: 12,
-    image: 'https://images.unsplash.com/photo-1595590424283-b8f1784cb2c8?auto=format&fit=crop&q=80&w=800',
-    gallery: [
-      'https://images.unsplash.com/photo-1595590424283-b8f1784cb2c8?auto=format&fit=crop&q=80&w=800',
-      'https://images.unsplash.com/photo-1574226516831-e1dff420e5c7?auto=format&fit=crop&q=80&w=800',
-      'https://images.unsplash.com/photo-1612287230202-1ff1d85d1bdf?auto=format&fit=crop&q=80&w=800'
-    ],
-    tags: ['Best Seller', 'พร้อมบวก'],
-    desc: 'ปืน M4A1 ฟูลม็อดแต่งลดแรงถีบสูงสุด พร้อมกระสุนระดับ T6 M995 เจาะเกราะทะลวงระดับพระกาฬ x300 นัด พร้อมเล่นทันที',
-    specs: ['เกราะ T5 ครบชุด', 'กระสุน T6 x300', 'Koen เงินสด 5.5M', 'กระเป๋า 28 ช่อง']
-  },
-  {
-    id: '2',
-    name: 'Starter Koen Account (15 Million)',
-    category: 'koen',
-    price: 150.00,
-    koenLabel: 'มูลค่า Koen',
-    koen: '15,000,000',
-    stock: 45,
-    image: 'https://images.unsplash.com/photo-1612287230202-1ff1d85d1bdf?auto=format&fit=crop&q=80&w=800',
-    gallery: [
-      'https://images.unsplash.com/photo-1612287230202-1ff1d85d1bdf?auto=format&fit=crop&q=80&w=800',
-      'https://images.unsplash.com/photo-1633158829585-23ba8f7c8caf?auto=format&fit=crop&q=80&w=800'
-    ],
-    tags: ['สายฟาร์ม', 'คุ้มสุด'],
-    desc: 'ไอดีเปล่าเริ่มต้นที่มีเงิน Koen สะสม 15 ล้านในคลัง ไม่เคยโดนแบน ผูกอีเมลสะอาดพร้อมโอนกรรมสิทธิ์',
-    specs: ['Koen สะสม 15,000,000', 'เลเวล 12+', 'ไม่เคยติดโทษแบน', 'เปลี่ยนอีเมลได้ทันที']
-  },
-  {
-    id: '3',
-    name: 'Sniper God Tier (AX50 + T7 Thermal)',
-    category: 'full_acc',
-    price: 890.00,
-    koenLabel: 'มูลค่า Koen',
-    koen: '30,000,000',
-    stock: 0,
-    image: 'https://images.unsplash.com/photo-1595590424283-b8f1784cb2c8?auto=format&fit=crop&q=80&w=800',
-    gallery: [
-      'https://images.unsplash.com/photo-1595590424283-b8f1784cb2c8?auto=format&fit=crop&q=80&w=800',
-      'https://images.unsplash.com/photo-1574226516831-e1dff420e5c7?auto=format&fit=crop&q=80&w=800'
-    ],
-    tags: ['Premium', 'เทพสไน'],
-    desc: 'เซ็ตสไนเปอร์ระดับสูงสุด AX50 ติดกล้องความร้อน T7 มองทะลุหมอกและใบไม้ เงินสดในตัว 30M เหมาะสำหรับสายซุ่มแนวหลัง',
-    specs: ['สไนเปอร์ AX50 Mod เต็ม', 'กล้อง T7 Thermal', 'กระสุน T7 x100', 'Koen เงินสด 30M']
-  },
-  {
-    id: '4',
-    name: 'FAL Full Mod + M61 (T6) x300',
-    category: 'ammo_acc',
-    price: 420.00,
-    koenLabel: 'มูลค่า Koen',
-    koen: '8,000,000',
-    stock: 7,
-    image: 'https://images.unsplash.com/photo-1550985542-f28329b3a364?auto=format&fit=crop&q=80&w=800',
-    gallery: [
-      'https://images.unsplash.com/photo-1550985542-f28329b3a364?auto=format&fit=crop&q=80&w=800',
-      'https://images.unsplash.com/photo-1595590424283-b8f1784cb2c8?auto=format&fit=crop&q=80&w=800'
-    ],
-    tags: ['ดาเมจจัด', 'ยอดนิยม'],
-    desc: 'FAL แต่งเต็มคุมแรงถีบขั้นสุด บรรจุกระสุน M61 เจาะเกราะหนัก 2 นัดร่วงทุกรายใน Kamona',
-    specs: ['FAL Full Mod Recoil ต่ำ', 'กระสุน M61 T6 x300', 'เกราะ T6 พร้อมหมวก', 'Koen เงินสด 8M']
-  },
-  {
-    id: '5',
-    name: 'Mega Wealthy Koen (100 Million)',
-    category: 'koen',
-    price: 1190.00,
-    koenLabel: 'มูลค่า Koen',
-    koen: '100,000,000',
-    stock: 3,
-    image: 'https://images.unsplash.com/photo-1633158829585-23ba8f7c8caf?auto=format&fit=crop&q=80&w=800',
-    gallery: [
-      'https://images.unsplash.com/photo-1633158829585-23ba8f7c8caf?auto=format&fit=crop&q=80&w=800',
-      'https://images.unsplash.com/photo-1612287230202-1ff1d85d1bdf?auto=format&fit=crop&q=80&w=800'
-    ],
-    tags: ['มหาเศรษฐี', 'VIP'],
-    desc: 'เงินสด Koen 100 ล้าน ซื้อได้ทุกอย่างในตลาดกลาง จัดเป็นไอดีสายสะสมหรือเปิดคลังบวกยาวตลอดทั้งซีซั่น',
-    specs: ['Koen 100,000,000 เต็ม', 'กล่องเซฟใหญ่ 3x3', 'ปลดล็อกพ่อค้าทุกตัว', 'รับประกันตลอดชีพ']
-  },
-  {
-    id: '6',
-    name: 'Budget Runner Set + MPX 9mm 7N31',
-    category: 'full_acc',
-    price: 120.00,
-    koenLabel: 'มูลค่า Koen',
-    koen: '3,000,000',
-    stock: 18,
-    image: 'https://images.unsplash.com/photo-1574226516831-e1dff420e5c7?auto=format&fit=crop&q=80&w=800',
-    gallery: [
-      'https://images.unsplash.com/photo-1574226516831-e1dff420e5c7?auto=format&fit=crop&q=80&w=800',
-      'https://images.unsplash.com/photo-1595590424283-b8f1784cb2c8?auto=format&fit=crop&q=80&w=800'
-    ],
-    tags: ['สายประหยัด', 'วิ่งไว'],
-    desc: 'เซ็ตวิ่งฟาร์มของไว ปืน SMG MPX ยิงไว ดาเมจทะลุเกราะ 7N31 ของครบตัวพร้อมลุย',
-    specs: ['MPX Full Mod ไวสุด', 'กระสุน 7N31 x250', 'เกราะเบา T4 วิ่งเร็ว', 'Koen เงินสด 3M']
-  },
-  {
-    id: 'srv_1',
-    name: 'บริการโยนกระสุน M61 (T6) พิกัดเป้าหมาย',
-    productType: 'service',
-    category: 'service_ammo',
-    serviceUnit: 'กอง',
-    serviceMin: 1,
-    serviceRate: 22.00,
-    price: 22.00,
-    koenLabel: 'กองกระสุน',
-    koen: 'กระสุน T6 M61 x60 นัด',
-    stock: 50,
-    image: 'https://images.unsplash.com/photo-1595590424283-b8f1784cb2c8?auto=format&fit=crop&q=80&w=800',
-    tags: ['โยน M61', 'ยอดนิยม', 'ส่งไว 3 นาที'],
-    desc: 'บริการโยนกระสุน M61 เกรด T6 เจาะเกราะสูงสุด ลงจุดนัดหมายในเกม ปลอดภัย ไม่โดนแบน รวดเร็วภายใน 3-5 นาที',
-    specs: ['กระสุน T6 M61 แท้ 100%', 'ส่งมอบในเกม (In-Game Safe Drop)', 'นัดรับในห้อง Raid ตามตกลง', 'ประกันของหาย 100% หากเกิดข้อผิดพลาด']
-  },
-  {
-    id: 'srv_2',
-    name: 'บริการโยนเงิน Koen M (ปลอดภัย ไม่โดนแบน)',
-    productType: 'service',
-    category: 'service_koen',
-    serviceUnit: 'M (ล้าน)',
-    serviceMin: 5,
-    serviceRate: 25.00,
-    price: 25.00,
-    koenLabel: 'มูลค่า Koen',
-    koen: '1,000,000 Koen / 1M',
-    stock: 100,
-    image: 'https://images.unsplash.com/photo-1612287230202-1ff1d85d1bdf?auto=format&fit=crop&q=80&w=800',
-    tags: ['โยนเงิน M', 'Koen สด', 'เรทดีสุด'],
-    desc: 'บริการโยกเงินและโยนเงิน Koen M สดเข้าตัว ปลอดภัยผ่านเทคนิคการเทรดที่ปลอดภัยที่สุด ขั้นต่ำ 5M ขึ้นไป',
-    specs: ['อัตราเรท 25฿ / 1M', 'ขั้นต่ำเริ่มต้น 5M', 'ส่งมอบผ่านระบบ Safe Trade ในเกม', 'ดูแลตลอดการส่งมอบโดยทีมงานมืออาชีพ']
-  }
-];
-
 const CATEGORIES = [
   { id: 'all', name: 'ทั้งหมด' },
   { id: 'ammo_acc', name: 'ไอดีไก่กระสุน' },
   { id: 'koen', name: 'ไอดีเงิน Koen' },
   { id: 'full_acc', name: 'ไอดีพร้อมเล่น' },
   { id: 'skins', name: 'สกินปืน / เซ็ตชุด' },
-  { id: 'service_ammo', name: '⚡ บริการโยน M61' },
-  { id: 'service_koen', name: '⚡ บริการโยนเงิน M' }
+  { id: 'service_ammo', name: 'บริการโยน M61' },
+  { id: 'service_koen', name: 'บริการโยนเงิน M' }
 ];
 
-// App State
-let PRODUCTS = DEFAULT_PRODUCTS.map(p => ({ ...p }));
+let PRODUCTS = [];
+let productsLoadFailed = false;
 let currentCategory = 'all';
 let searchQuery = '';
 let smartFilter = 'all'; // 'all' | 'instock' | 'under200' | '200to500' | 'over500'
@@ -184,13 +39,11 @@ let selectedProduct = null;
 let serviceOrderQty = 1;
 let currentPaymentMethod = 'promptpay';
 let discountAmount = 0;
+let promoDiscountFn = null; // subtotal -> discount, so percent codes follow quantity changes
 let appliedPromoCode = null;
-let timerCountdown = 600;
-let timerInterval = null;
-let isPasswordRevealed = false;
+let isSubmitting = false;
 let toastTimeout = null;
-let currentDeliveredUsername = '';
-let currentDeliveredPassword = '';
+let unsubOrders = null;
 let currentUser = null;
 let currentModalGallery = [];
 let currentGalleryIdx = 0;
@@ -287,6 +140,7 @@ function initAuthListener() {
         if (mobileAuthText) mobileAuthText.innerText = name.length > 5 ? name.slice(0, 5) + '...' : name;
         syncUserCloudOrders(user.uid);
       } else {
+        syncUserCloudOrders(null);
         cloudOrdersCache = [];
         if (loggedOutContainer) loggedOutContainer.classList.remove('hidden');
         if (loggedInContainer) {
@@ -312,22 +166,11 @@ async function handleSignOut() {
   }
 }
 
-function updateFirebaseStatus(isOnline, message) {
-  const dot = document.getElementById('firebase-status-dot');
-  const text = document.getElementById('firebase-status-text');
-  if (dot && text) {
-    dot.className = isOnline 
-      ? 'w-1.5 h-1.5 rounded-full bg-emerald-500' 
-      : 'w-1.5 h-1.5 rounded-full bg-amber-500';
-    text.innerText = message;
-  }
-}
-
 function renderSkeletonGrid() {
   const grid = document.getElementById('product-grid');
   if (!grid) return;
   grid.innerHTML = Array.from({ length: 6 }).map(() => `
-    <div class="apple-card p-6 flex flex-col h-full animate-pulse">
+    <div class="apple-card p-7 flex flex-col h-full animate-pulse">
       <div class="aspect-[16/10] rounded-images bg-mist mb-4"></div>
       <div class="h-4 bg-mist rounded-full w-3/4 mb-2"></div>
       <div class="h-3 bg-mist rounded-full w-full mb-1.5"></div>
@@ -344,61 +187,52 @@ function renderSkeletonGrid() {
   `).join('');
 }
 
+function showProductsLoadFailed() {
+  PRODUCTS = [];
+  productsLoadFailed = true;
+  renderCategoryOptions();
+  renderProducts();
+  updateHeroMetrics();
+}
+
 function initFirebaseProductsListener() {
-  if (!db) {
-    updateFirebaseStatus(false, "Firebase: โหมดออฟไลน์");
-    renderCategoryOptions();
-    renderProducts();
-    updateHeroMetrics();
-    return;
-  }
+  if (!db) return showProductsLoadFailed();
+  // shortcut: fixed 8s wait for the first snapshot, upgrade to retry/backoff if flaky networks matter
+  const loadTimer = setTimeout(showProductsLoadFailed, 8000);
   try {
-    const productsRef = collection(db, "products");
-    onSnapshot(productsRef, (snapshot) => {
-      if (!snapshot.empty) {
-        const firestoreList = [];
-        snapshot.forEach((docSnap) => {
-          const data = docSnap.data() || {};
-          const primaryImg = data.image || FALLBACK_IMG;
-          firestoreList.push({
-            id: docSnap.id,
-            ...data,
-            name: String(data.name || 'ไม่มีชื่อสินค้า'),
-            category: String(data.category || 'all'),
-            price: getEffectivePrice(data),
-            koen: data.koen || '-',
-            koenLabel: data.koenLabel || data.currencyLabel || data.unitLabel || '',
-            stock: getEffectiveStock(data),
-            image: primaryImg,
-            gallery: Array.isArray(data.gallery) && data.gallery.length > 0 ? data.gallery.filter(Boolean) : [primaryImg],
-            tags: Array.isArray(data.tags) ? data.tags.map(String) : [],
-            desc: data.desc || '',
-            specs: Array.isArray(data.specs) ? data.specs.map(String) : []
-          });
-        });
-        PRODUCTS = firestoreList;
-        updateFirebaseStatus(true, `Firebase: ${PRODUCTS.length} รายการ`);
-      } else {
-        PRODUCTS = DEFAULT_PRODUCTS.map(p => ({ ...p }));
-        updateFirebaseStatus(true, "Firebase: ข้อมูลเริ่มต้น");
-      }
+    onSnapshot(collection(db, "products"), (snapshot) => {
+      clearTimeout(loadTimer);
+      productsLoadFailed = false;
+      PRODUCTS = snapshot.docs.map((docSnap) => {
+        const data = docSnap.data() || {};
+        const primaryImg = data.image || FALLBACK_IMG;
+        return {
+          id: docSnap.id,
+          ...data,
+          name: String(data.name || 'ไม่มีชื่อสินค้า'),
+          category: String(data.category || 'all'),
+          price: getEffectivePrice(data),
+          koen: data.koen || '-',
+          koenLabel: data.koenLabel || data.currencyLabel || data.unitLabel || '',
+          stock: getEffectiveStock(data),
+          image: primaryImg,
+          gallery: Array.isArray(data.gallery) && data.gallery.length > 0 ? data.gallery.filter(Boolean) : [primaryImg],
+          tags: Array.isArray(data.tags) ? data.tags.map(String) : [],
+          desc: data.desc || '',
+          specs: Array.isArray(data.specs) ? data.specs.map(String) : []
+        };
+      });
       renderCategoryOptions();
       renderProducts();
       updateHeroMetrics();
     }, (err) => {
-      console.warn("Firestore listener fallback to default:", err);
-      PRODUCTS = DEFAULT_PRODUCTS.map(p => ({ ...p }));
-      updateFirebaseStatus(false, "Firebase: โหมดออฟไลน์");
-      renderCategoryOptions();
-      renderProducts();
-      updateHeroMetrics();
+      clearTimeout(loadTimer);
+      console.warn("Products listener failed:", err);
+      showProductsLoadFailed();
     });
   } catch (e) {
-    PRODUCTS = DEFAULT_PRODUCTS.map(p => ({ ...p }));
-    updateFirebaseStatus(false, "Firebase: โหมดออฟไลน์");
-    renderCategoryOptions();
-    renderProducts();
-    updateHeroMetrics();
+    clearTimeout(loadTimer);
+    showProductsLoadFailed();
   }
 }
 
@@ -421,12 +255,11 @@ function applySystemSettings(data) {
           ${safeMarquee}
         </span>
         <span class="text-hairline shrink-0">•</span>
-        <span class="mx-6 shrink-0 whitespace-nowrap">🔒 รับประกันทุกไอดี ปลอดภัย ไม่เสี่ยงโดนแบน บัญชีสะอาด 100%</span>
-        <span class="text-hairline shrink-0">•</span>
-        <span class="mx-6 text-appleBlue font-medium shrink-0 whitespace-nowrap">🎁 โค้ดส่วนลด: TACTICAL ลด 50 บาท | ARENA10 ลด 10%</span>
+        <span class="mx-6 text-appleBlue font-medium shrink-0 whitespace-nowrap">โค้ดส่วนลด: TACTICAL ลด 50 บาท | ARENA10 ลด 10%</span>
         <span class="text-hairline shrink-0">•</span>
       `;
-      track.innerHTML = item + item;
+      // The track slides by -50%, so it needs an even number of copies wide enough to cover large screens.
+      track.innerHTML = item.repeat(4);
     }
   }
 
@@ -437,29 +270,38 @@ function applySystemSettings(data) {
   if (ribbon && data.ribbonText) {
     ribbon.classList.remove('hidden');
     if (rText) rText.innerText = data.ribbonText;
-    if (rLink && data.ribbonLinkUrl) rLink.href = data.ribbonLinkUrl;
+    if (rLink && /^(https?:|#|\/)/.test(String(data.ribbonLinkUrl || ''))) rLink.href = data.ribbonLinkUrl;
     if (rLinkText && data.ribbonLinkText) rLinkText.innerText = data.ribbonLinkText;
   }
 
-  const s1v = document.getElementById('hero-stat1-val');
-  const s1l = document.getElementById('hero-stat1-lbl');
-  if (s1v && data.stat1Val) s1v.innerText = data.stat1Val;
-  if (s1l && data.stat1Lbl) s1l.innerText = data.stat1Lbl;
+  // Stat tiles 1, 3 and 4 stay hidden until the admin enters a real value; tile 2 is computed from stock.
+  [1, 3, 4].forEach((n) => {
+    const val = document.getElementById(`hero-stat${n}-val`);
+    const lbl = document.getElementById(`hero-stat${n}-lbl`);
+    if (val && data[`stat${n}Val`]) {
+      val.innerText = data[`stat${n}Val`];
+      val.parentElement.classList.remove('hidden');
+    }
+    if (lbl && data[`stat${n}Lbl`]) lbl.innerText = data[`stat${n}Lbl`];
+  });
 
   const s2l = document.getElementById('hero-stat2-lbl');
   if (s2l && data.stat2Lbl) s2l.innerText = data.stat2Lbl;
   customStat2Override = data.stat2Val ? String(data.stat2Val).trim() : '';
   updateHeroMetrics();
 
-  const s3v = document.getElementById('hero-stat3-val');
-  const s3l = document.getElementById('hero-stat3-lbl');
-  if (s3v && data.stat3Val) s3v.innerText = data.stat3Val;
-  if (s3l && data.stat3Lbl) s3l.innerText = data.stat3Lbl;
-
-  const s4v = document.getElementById('hero-stat4-val');
-  const s4l = document.getElementById('hero-stat4-lbl');
-  if (s4v && data.stat4Val) s4v.innerText = data.stat4Val;
-  if (s4l && data.stat4Lbl) s4l.innerText = data.stat4Lbl;
+  // Payment details come from system/settings so the shop's real account is never hard-coded.
+  const qrImg = document.getElementById('qr-img');
+  if (qrImg && /^https:\/\//.test(String(data.promptpayQrUrl || ''))) {
+    qrImg.src = data.promptpayQrUrl;
+    qrImg.classList.remove('hidden');
+    document.getElementById('qr-placeholder')?.classList.add('hidden');
+  }
+  const acctName = document.getElementById('promptpay-account-name');
+  if (acctName && data.promptpayName) {
+    acctName.innerText = data.promptpayName;
+    acctName.closest('.hidden')?.classList.remove('hidden');
+  }
 }
 
 function initSettingsListener() {
@@ -595,7 +437,7 @@ function renderProducts() {
     } else if (smartFilter === 'under200') {
       matchSmart = stockCount > 0 && price <= 200;
     } else if (smartFilter === '200to500') {
-      matchSmart = stockCount > 0 && price >= 200 && price <= 500;
+      matchSmart = stockCount > 0 && price > 200 && price <= 500;
     } else if (smartFilter === 'over500') {
       matchSmart = stockCount > 0 && price > 500;
     }
@@ -613,8 +455,10 @@ function renderProducts() {
 
   const readyCount = filtered.filter(p => getEffectiveStock(p) > 0).length;
   if (countLabel) {
-    countLabel.innerText = `แสดง ${filtered.length} รายการ (พร้อมส่ง ${readyCount})`;
+    countLabel.innerText = productsLoadFailed ? 'โหลดสินค้าไม่สำเร็จ' : `แสดง ${filtered.length} รายการ (พร้อมส่ง ${readyCount})`;
   }
+  const emptyTitle = document.getElementById('empty-title');
+  if (emptyTitle) emptyTitle.innerText = productsLoadFailed ? 'โหลดรายการสินค้าไม่สำเร็จ กรุณารีเฟรชหน้านี้' : 'ไม่พบสินค้าที่ตรงกับตัวกรอง';
 
   if (filtered.length === 0) {
     grid.innerHTML = '';
@@ -633,21 +477,21 @@ function renderProducts() {
     const unit = escapeHtml(product.serviceUnit || (isService ? 'กอง' : 'ชิ้น'));
     const min = Math.max(1, Number(product.serviceMin) || 1);
     const displayPrice = getEffectivePrice(product).toFixed(2);
-    const safeId = encodeURIComponent(String(product.id || ''));
+    const idArg = escapeHtml(JSON.stringify(String(product.id ?? '')));
     const safeName = escapeHtml(product.name || 'ไม่มีชื่อสินค้า');
     const safeDesc = escapeHtml(product.desc || '-');
     const safeImg = escapeHtml(product.image || FALLBACK_IMG);
     const safeKoenBadge = escapeHtml(formatKoenText(product));
 
     return `
-      <div class="apple-card p-6 flex flex-col h-full transition-colors hover:border-steel">
+      <div class="apple-card p-7 flex flex-col h-full transition-colors hover:border-steel">
         <!-- Thumbnail -->
-        <div onclick="openDetailModal(decodeURIComponent('${safeId}'))" class="relative aspect-[16/10] rounded-images overflow-hidden bg-mist border border-hairline cursor-pointer mb-4">
+        <div onclick="openDetailModal(${idArg})" class="relative aspect-[16/10] rounded-images overflow-hidden bg-mist border border-hairline cursor-pointer mb-4">
           <img 
             src="${safeImg}" 
             alt="${safeName}" 
             class="w-full h-full object-cover transition-transform duration-500 hover:scale-105 ${isOutOfStock ? 'grayscale opacity-75' : ''}"
-            onerror="this.src='${FALLBACK_IMG}'"
+            onerror="this.onerror=null;this.src='${FALLBACK_IMG}'"
           />
           
           <!-- Badges -->
@@ -663,7 +507,7 @@ function renderProducts() {
               </span>
             ` : `
               <span class="bg-gallery/95 text-ink border border-hairline text-[10px] font-semibold px-2.5 py-0.5 rounded-full flex items-center gap-1">
-                <span class="w-1.5 h-1.5 bg-emerald-500 rounded-full"></span>
+                <span class="w-1.5 h-1.5 bg-appleBlue rounded-full"></span>
                 พร้อมส่ง ${stockCount}
               </span>
             `)}
@@ -677,7 +521,7 @@ function renderProducts() {
 
         <!-- Body -->
         <div class="flex flex-col flex-grow">
-          <h3 onclick="openDetailModal(decodeURIComponent('${safeId}'))" class="text-base font-semibold text-ink line-clamp-1 hover:text-appleBlue transition-colors cursor-pointer mb-1">
+          <h3 onclick="openDetailModal(${idArg})" class="text-base font-semibold text-ink line-clamp-1 hover:text-appleBlue transition-colors cursor-pointer mb-1">
             ${safeName}
           </h3>
           
@@ -692,26 +536,26 @@ function renderProducts() {
           </div>
 
           <!-- Actions -->
-          <div class="mt-auto flex items-center justify-between pt-3.5 border-t border-hairline gap-2">
+          <div class="mt-auto flex flex-wrap items-center justify-between pt-3.5 border-t border-hairline gap-2">
             <div class="flex flex-col">
               <span class="text-[10px] text-slate font-medium">
                 ${isService ? `ราคา (ขั้นต่ำ ${min} ${unit})` : 'ราคา'}
               </span>
               <div class="flex items-baseline gap-1">
-                <span class="text-2xl leading-tight font-semibold text-pricingBlue font-heading">
+                <span class="text-2xl leading-tight font-semibold text-ink font-heading">
                   ฿${displayPrice}
                 </span>
-                ${isService ? `<span class="text-xs text-slate font-normal">/ ${unit}</span>` : ''}
+                ${isService ? `<span class="text-xs text-slate font-normal whitespace-nowrap">/ ${unit}</span>` : ''}
               </div>
             </div>
             
             <div class="flex items-center gap-2 shrink-0">
-              <button type="button" onclick="openDetailModal(decodeURIComponent('${safeId}'))" class="apple-explore-pill px-3.5 py-1.5 text-xs">
+              <button type="button" onclick="openDetailModal(${idArg})" class="apple-explore-pill px-3.5 py-1.5 text-xs">
                 รายละเอียดสินค้า
               </button>
               <button 
                 type="button"
-                onclick="startCheckout(decodeURIComponent('${safeId}'))" 
+                onclick="startCheckout(${idArg})" 
                 ${isOutOfStock ? 'disabled' : ''} 
                 class="${isOutOfStock 
                   ? 'bg-control text-steel px-4 py-1.5 rounded-button text-xs font-medium cursor-not-allowed' 
@@ -811,8 +655,8 @@ function renderGalleryThumbnails() {
   if (counter) counter.innerText = `ภาพ ${currentGalleryIdx + 1} / ${currentModalGallery.length}`;
 
   strip.innerHTML = currentModalGallery.map((imgUrl, idx) => `
-    <button type="button" onclick="switchGalleryImage(${idx})" class="w-16 h-12 rounded-xl overflow-hidden bg-mist border ${idx === currentGalleryIdx ? 'border-pricingBlue ring-1 ring-pricingBlue' : 'border-hairline'} shrink-0">
-      <img src="${escapeHtml(imgUrl)}" alt="Thumb" class="w-full h-full object-cover" onerror="this.src='${FALLBACK_IMG}'">
+    <button type="button" aria-label="ดูภาพที่ ${idx + 1}" onclick="switchGalleryImage(${idx})" class="w-16 h-12 rounded-links overflow-hidden bg-mist border ${idx === currentGalleryIdx ? 'border-ink ring-1 ring-ink' : 'border-hairline'} shrink-0">
+      <img src="${escapeHtml(imgUrl)}" alt="Thumb" class="w-full h-full object-cover" onerror="this.onerror=null;this.src='${FALLBACK_IMG}'">
     </button>
   `).join('');
 }
@@ -837,18 +681,22 @@ function closeDetailModal() {
 // 5. CHECKOUT & ATOMIC STOCK CLAIM ENGINE
 // ==========================================
 function startCheckout(productId) {
-  selectedProduct = PRODUCTS.find(p => String(p.id) === String(productId));
-  if (!selectedProduct || getEffectiveStock(selectedProduct) <= 0) return;
+  const product = PRODUCTS.find(p => String(p.id) === String(productId));
+  if (!product || getEffectiveStock(product) <= 0) return;
+  if (!currentUser) {
+    triggerToast('กรุณาเข้าสู่ระบบก่อนสั่งซื้อ เพื่อให้ดูไอดีที่ได้รับในเมนูออเดอร์ของฉันได้');
+    setTimeout(() => { window.location.href = 'front/login.html?mode=login'; }, 1200);
+    return;
+  }
+  selectedProduct = product;
 
   const isService = isServiceProduct(selectedProduct);
   const minQty = isService ? Math.max(1, Number(selectedProduct.serviceMin) || 1) : 1;
   serviceOrderQty = Math.min(minQty, getEffectiveStock(selectedProduct));
 
-  discountAmount = 0;
+  promoDiscountFn = null;
   appliedPromoCode = null;
   document.getElementById('promo-input').value = '';
-  document.getElementById('discount-row').classList.add('hidden');
-  document.getElementById('discount-row').classList.remove('flex');
 
   const srvBox = document.getElementById('checkout-service-options');
   if (srvBox) {
@@ -856,10 +704,6 @@ function startCheckout(productId) {
       srvBox.classList.remove('hidden');
       document.getElementById('checkout-service-unit').innerText = selectedProduct.serviceUnit || 'กอง';
       document.getElementById('checkout-service-qty').innerText = serviceOrderQty;
-      const targetInput = document.getElementById('checkout-service-target');
-      if (targetInput && currentUser?.email && !targetInput.value) {
-        targetInput.value = currentUser.email;
-      }
     } else {
       srvBox.classList.add('hidden');
     }
@@ -872,7 +716,6 @@ function startCheckout(productId) {
   
   updateCheckoutTotal();
   switchPaymentTab('promptpay');
-  startTimer();
   navigateTo('checkout');
 }
 
@@ -904,9 +747,13 @@ function getSubtotalPrice() {
 function updateCheckoutTotal() {
   if (!selectedProduct) return;
   const baseSubtotal = getSubtotalPrice();
-  const clampedDiscount = Math.min(discountAmount, baseSubtotal);
-  const finalPrice = Math.max(0, baseSubtotal - clampedDiscount);
-  
+  discountAmount = promoDiscountFn ? Math.min(promoDiscountFn(baseSubtotal), baseSubtotal) : 0;
+  const finalPrice = baseSubtotal - discountAmount;
+
+  const discountRow = document.getElementById('discount-row');
+  discountRow.classList.toggle('hidden', !discountAmount);
+  discountRow.classList.toggle('flex', discountAmount > 0);
+  document.getElementById('checkout-discount').innerText = `-฿${discountAmount.toFixed(2)}`;
   document.getElementById('checkout-base-price').innerText = `฿${baseSubtotal.toFixed(2)}`;
   document.getElementById('checkout-final-price').innerText = `฿${finalPrice.toFixed(2)}`;
   document.getElementById('qr-amount-label').innerText = `฿${finalPrice.toFixed(2)}`;
@@ -928,11 +775,14 @@ async function applyPromoCode() {
   if (!selectedProduct) return;
 
   if (!code) {
-    discountAmount = 0;
+    promoDiscountFn = null;
     appliedPromoCode = null;
-    document.getElementById('discount-row').classList.add('hidden');
-    document.getElementById('discount-row').classList.remove('flex');
     updateCheckoutTotal();
+    return;
+  }
+
+  if (code === appliedPromoCode) {
+    triggerToast('ใช้โค้ดนี้อยู่แล้ว');
     return;
   }
 
@@ -945,16 +795,6 @@ async function applyPromoCode() {
     } catch (err) {
       console.warn('Fetch promo fallback:', err);
     }
-  }
-
-  if (!promoData) {
-    try {
-      const localPromos = localStorage.getItem('tactical_admin_promos');
-      if (localPromos) {
-        const list = JSON.parse(localPromos);
-        if (Array.isArray(list)) promoData = list.find(p => p.code === code);
-      }
-    } catch (_) {}
   }
 
   if (!promoData) {
@@ -989,64 +829,31 @@ async function applyPromoCode() {
   }
 
   promoFailedAttempts = 0;
-  const basePrice = getSubtotalPrice();
-  let calcDisc = 0;
-  let infoMsg = '';
-
+  const randBetween = (lo, hi) => Math.floor(Math.random() * (hi - lo + 1)) + lo;
+  let discountFn = null;
   if (promoData.type === 'fixed') {
-    calcDisc = Math.min(Number(promoData.value) || 0, basePrice);
-    infoMsg = `ลดทันที ฿${calcDisc.toFixed(2)}`;
+    const amt = Number(promoData.value) || 0;
+    discountFn = () => amt;
   } else if (promoData.type === 'percent') {
     const pct = Number(promoData.value) || 0;
-    calcDisc = Math.round(basePrice * (pct / 100));
-    infoMsg = `ลด ${pct}% (-฿${calcDisc.toFixed(2)})`;
+    discountFn = (base) => Math.round(base * (pct / 100));
   } else if (promoData.type === 'random_percent') {
-    const minP = Number(promoData.minValue) || 10;
-    const maxP = Number(promoData.maxValue) || 20;
-    const randPct = Math.floor(Math.random() * (maxP - minP + 1)) + minP;
-    calcDisc = Math.round(basePrice * (randPct / 100));
-    infoMsg = `สุ่มได้ส่วนลด ${randPct}% (-฿${calcDisc.toFixed(2)})`;
+    const pct = randBetween(Number(promoData.minValue) || 10, Number(promoData.maxValue) || 20);
+    discountFn = (base) => Math.round(base * (pct / 100));
   } else if (promoData.type === 'random_fixed') {
-    const minV = Number(promoData.minValue) || 10;
-    const maxV = Number(promoData.maxValue) || 50;
-    const randAmt = Math.floor(Math.random() * (maxV - minV + 1)) + minV;
-    calcDisc = Math.min(randAmt, basePrice);
-    infoMsg = `สุ่มได้ส่วนลด ฿${calcDisc.toFixed(2)}`;
+    const amt = randBetween(Number(promoData.minValue) || 10, Number(promoData.maxValue) || 50);
+    discountFn = () => amt;
   }
 
-  discountAmount = calcDisc;
+  if (!discountFn) {
+    triggerToast('โค้ดนี้ไม่สามารถใช้งานได้');
+    return;
+  }
+
+  promoDiscountFn = discountFn;
   appliedPromoCode = code;
-  triggerToast(`ใช้โค้ด ${code} สำเร็จ! ${infoMsg}`);
-
-  document.getElementById('discount-row').classList.remove('hidden');
-  document.getElementById('discount-row').classList.add('flex');
-  document.getElementById('checkout-discount').innerText = `-฿${discountAmount.toFixed(2)}`;
   updateCheckoutTotal();
-}
-
-async function consumePromoQuota(code) {
-  if (!code) return;
-  try {
-    const localPromos = localStorage.getItem('tactical_admin_promos');
-    if (localPromos) {
-      const list = JSON.parse(localPromos);
-      if (Array.isArray(list)) {
-        const idx = list.findIndex(p => p.code === code);
-        if (idx !== -1) {
-          list[idx].usedCount = (Number(list[idx].usedCount) || 0) + 1;
-          localStorage.setItem('tactical_admin_promos', JSON.stringify(list));
-        }
-      }
-    }
-  } catch (_) {}
-
-  if (db) {
-    try {
-      await updateDoc(doc(db, 'promo_codes', code), {
-        usedCount: increment(1)
-      });
-    } catch (_) {}
-  }
+  triggerToast(`ใช้โค้ด ${code} สำเร็จ! ลด ฿${discountAmount.toFixed(2)}`);
 }
 
 function switchPaymentTab(tab) {
@@ -1075,188 +882,33 @@ function switchPaymentTab(tab) {
   }
 }
 
-function startTimer() {
-  stopTimer();
-  timerCountdown = 600;
-  updateTimerDisplay();
-  timerInterval = setInterval(() => {
-    timerCountdown--;
-    if (timerCountdown <= 0) {
-      stopTimer();
-      navigateTo('store');
-      triggerToast('หมดเวลาชำระเงิน ระบบได้คืนสต็อกสินค้าแล้ว');
-    } else {
-      updateTimerDisplay();
-    }
-  }, 1000);
-}
-
-function stopTimer() {
-  if (timerInterval) {
-    clearInterval(timerInterval);
-    timerInterval = null;
+function isTrueMoneyVoucher(url) {
+  try {
+    const u = new URL(url);
+    return u.protocol === 'https:' && u.hostname === 'gift.truemoney.com';
+  } catch {
+    return false;
   }
 }
 
-function updateTimerDisplay() {
-  const m = Math.floor(timerCountdown / 60);
-  const s = timerCountdown % 60;
-  const formatted = `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
-  const el = document.getElementById('checkout-timer');
-  if (el) el.innerText = formatted;
+function setSubmitButtonsDisabled(disabled) {
+  ['btn-submit-promptpay', 'btn-submit-truemoney'].forEach(id => {
+    const btn = document.getElementById(id);
+    if (btn) btn.disabled = disabled;
+  });
 }
 
-async function claimStockItem(productId, orderId, qty = 1, isService = false) {
-  if (!productId) return null;
-
-  if (isService) {
-    if (db) {
-      try {
-        const prodRef = doc(db, "products", productId);
-        await runTransaction(db, async (transaction) => {
-          const prodSnap = await transaction.get(prodRef);
-          if (prodSnap.exists()) {
-            const currentStock = Number(prodSnap.data()?.stock) || 0;
-            if (currentStock < qty) throw new Error("OUT_OF_STOCK");
-            transaction.update(prodRef, {
-              stock: Math.max(0, currentStock - qty),
-              updatedAt: serverTimestamp()
-            });
-          }
-        });
-      } catch (err) {
-        if (err.message === "OUT_OF_STOCK") return null;
-      }
-    }
-    const prod = PRODUCTS.find(p => String(p.id) === String(productId));
-    if (prod) {
-      if (getEffectiveStock(prod) < qty) return null;
-      prod.stock = Math.max(0, getEffectiveStock(prod) - qty);
-      renderProducts();
-      updateHeroMetrics();
-    }
-    return {
-      stockItemId: `srv_${Date.now()}`,
-      username: 'SERVICE_QUEUE',
-      password: '-',
-      source: 'service'
-    };
-  }
-
-  // Normal Account Claim
-  if (db) {
-    try {
-      const prodRef = doc(db, "products", productId);
-      const stockCol = collection(prodRef, "stock_items");
-      const q = query(stockCol, where("status", "==", "available"), limit(3));
-      const snap = await getDocs(q);
-
-      if (!snap.empty) {
-        for (const candidateDoc of snap.docs) {
-          try {
-            const candidateRef = doc(stockCol, candidateDoc.id);
-            const claimedData = await runTransaction(db, async (transaction) => {
-              const stockSnap = await transaction.get(candidateRef);
-              const prodSnap = await transaction.get(prodRef);
-
-              if (!stockSnap.exists() || stockSnap.data().status !== "available") {
-                throw new Error("ALREADY_CLAIMED");
-              }
-              const currentStock = prodSnap.data()?.stock || 0;
-              if (currentStock <= 0) {
-                throw new Error("OUT_OF_STOCK");
-              }
-
-              const rawItem = stockSnap.data();
-              transaction.update(candidateRef, {
-                status: "sold",
-                orderId,
-                claimedBy: currentUser ? currentUser.uid : "guest",
-                claimedEmail: currentUser ? currentUser.email : "guest",
-                soldAt: serverTimestamp()
-              });
-              transaction.update(prodRef, {
-                stock: Math.max(0, currentStock - 1),
-                updatedAt: serverTimestamp()
-              });
-
-              return {
-                stockItemId: candidateDoc.id,
-                username: rawItem.username,
-                password: rawItem.password,
-                source: "firestore"
-              };
-            });
-            return claimedData;
-          } catch (txnError) {
-            if (txnError.message === "ALREADY_CLAIMED") continue;
-            throw txnError;
-          }
-        }
-      }
-    } catch (firestoreErr) {
-      console.warn("Firestore stock transaction fallback:", firestoreErr);
-    }
-  }
-
-  const localStockKey = "tactical_stock_" + productId;
-  const rawLocal = localStorage.getItem(localStockKey);
-  if (rawLocal) {
-    try {
-      const items = JSON.parse(rawLocal);
-      const availIdx = items.findIndex(i => i.status === "available");
-      if (availIdx !== -1) {
-        const item = items[availIdx];
-        item.status = "sold";
-        item.orderId = orderId;
-        item.claimedBy = currentUser ? currentUser.uid : "guest";
-        item.soldAt = new Date().toISOString();
-        localStorage.setItem(localStockKey, JSON.stringify(items));
-
-        const prod = PRODUCTS.find(p => String(p.id) === String(productId));
-        if (prod && prod.stock > 0) {
-          prod.stock -= 1;
-          renderProducts();
-          updateHeroMetrics();
-        }
-
-        return {
-          stockItemId: item.id || `local_${Date.now()}`,
-          username: item.username,
-          password: item.password,
-          source: "local"
-        };
-      }
-    } catch (e) {
-      console.warn("Local storage fallback parsing error:", e);
-    }
-  }
-
-  // shortcut: generates credentials on the fly when stock_items subcollection is unseeded, upgrade when admin stock seeding is mandatory
-  const prod = PRODUCTS.find(p => String(p.id) === String(productId));
-  if (prod && getEffectiveStock(prod) > 0) {
-    prod.stock = Math.max(0, getEffectiveStock(prod) - 1);
-    renderProducts();
-    updateHeroMetrics();
-    const suffix = Math.floor(10000 + Math.random() * 90000);
-    return {
-      stockItemId: `auto_${Date.now()}`,
-      username: `AB_Tactical_${suffix}`,
-      password: `Kamona#${suffix}Tx`,
-      source: "catalog_fallback"
-    };
-  }
-
-  return null;
-}
-
-async function simulateOrderSuccess() {
-  if (!selectedProduct) {
-    triggerToast('ไม่พบข้อมูลสินค้าที่เลือกสั่งซื้อ');
+// The browser never verifies payment or hands out credentials: it only files a pending_payment order.
+// The backend/admin confirms the money, then sets status "completed" and accountDelivered.
+async function submitOrder() {
+  const product = selectedProduct;
+  if (isSubmitting || !product) return;
+  if (!currentUser || !db) {
+    triggerToast('กรุณาเข้าสู่ระบบก่อนสั่งซื้อ');
     return;
   }
 
-  const isService = isServiceProduct(selectedProduct);
+  const isService = isServiceProduct(product);
   const serviceTarget = document.getElementById('checkout-service-target')?.value.trim() || '';
   if (isService && !serviceTarget) {
     triggerToast('กรุณากรอกชื่อในเกม / UID หรือช่องทางติดต่อเพื่อนัดรับของ');
@@ -1264,134 +916,72 @@ async function simulateOrderSuccess() {
     return;
   }
 
-  const btn = document.getElementById('btn-verify-promptpay');
-  if (btn) {
-    btn.innerText = 'กำลังตรวจสอบสลิปและตัดสต็อก...';
-    btn.disabled = true;
-  }
-
-  const orderNum = Math.floor(100000 + Math.random() * 900000);
-  const orderId = `ORD-AB${orderNum}`;
-  const baseSubtotal = getSubtotalPrice();
-  const finalPrice = Math.max(0, baseSubtotal - Math.min(discountAmount, baseSubtotal));
-  const qty = isService ? serviceOrderQty : 1;
-  const unit = selectedProduct.serviceUnit || 'กอง';
-
-  const claimedStock = await claimStockItem(selectedProduct.id, orderId, qty, isService);
-
-  if (!claimedStock) {
-    triggerToast('ขออภัย! สินค้าหรือคิวในคลังไม่เพียงพอ ไม่สามารถส่งมอบได้');
-    if (btn) {
-      btn.innerText = 'ยืนยันการโอนเงิน (ตรวจสลิปอัตโนมัติ)';
-      btn.disabled = false;
+  let paymentProof;
+  if (currentPaymentMethod === 'truemoney') {
+    paymentProof = document.getElementById('voucher-url-input').value.trim();
+    if (!isTrueMoneyVoucher(paymentProof)) {
+      triggerToast('กรุณากรอกลิงก์ซองของขวัญ TrueMoney ให้ถูกต้อง (https://gift.truemoney.com/...)');
+      return;
     }
-    return;
-  }
-
-  if (appliedPromoCode) {
-    await consumePromoQuota(appliedPromoCode);
-  }
-
-  currentDeliveredUsername = isService ? serviceTarget : claimedStock.username;
-  currentDeliveredPassword = claimedStock.password;
-
-  const orderRecord = {
-    orderNumber: orderId,
-    orderId,
-    productId: selectedProduct.id,
-    productName: selectedProduct.name,
-    productType: isService ? 'service' : 'account',
-    quantity: qty,
-    unit: isService ? unit : 'ไอดี',
-    buyerEmail: isService ? serviceTarget : (currentUser?.email || 'guest'),
-    amount: finalPrice,
-    finalPrice,
-    discount: discountAmount,
-    promoCode: appliedPromoCode || null,
-    paymentMethod: currentPaymentMethod,
-    status: 'completed',
-    userEmail: currentUser?.email || 'guest',
-    userId: currentUser?.uid || null,
-    accountDelivered: {
-      username: currentDeliveredUsername,
-      password: currentDeliveredPassword,
-      stockItemId: claimedStock.stockItemId
-    },
-    createdAt: new Date().toISOString()
-  };
-
-  saveOrderToLocal(orderRecord);
-
-  if (db) {
-    try {
-      const ordersRef = collection(db, "orders");
-      await addDoc(ordersRef, {
-        ...orderRecord,
-        createdAt: serverTimestamp()
-      });
-    } catch (err) {
-      console.warn("Save order to Firestore warning (saved locally):", err);
+  } else {
+    if (document.getElementById('qr-img').classList.contains('hidden')) {
+      triggerToast('ร้านยังไม่เปิดรับชำระผ่านพร้อมเพย์ กรุณาเลือกช่องทางอื่น');
+      return;
+    }
+    paymentProof = document.getElementById('payment-ref-input').value.trim();
+    if (!paymentProof) {
+      triggerToast('กรุณากรอกเวลาที่โอนหรือเลขอ้างอิงรายการ');
+      document.getElementById('payment-ref-input').focus();
+      return;
     }
   }
 
-  setTimeout(() => {
-    if (btn) {
-      btn.innerText = 'ยืนยันการโอนเงิน (ตรวจสลิปอัตโนมัติ)';
-      btn.disabled = false;
-    }
-    
-    document.getElementById('success-product-name').innerText = selectedProduct.name;
+  isSubmitting = true;
+  setSubmitButtonsDisabled(true);
+  try {
+    const orderRef = doc(collection(db, 'orders'));
+    const orderId = `ORD-${orderRef.id.slice(0, 8).toUpperCase()}`;
+    const qty = isService ? serviceOrderQty : 1;
+    const unit = product.serviceUnit || 'กอง';
+    const finalPrice = getSubtotalPrice() - discountAmount;
+
+    await setDoc(orderRef, {
+      orderNumber: orderId,
+      orderId,
+      productId: product.id,
+      productName: product.name,
+      productType: isService ? 'service' : 'account',
+      quantity: qty,
+      unit: isService ? unit : 'ไอดี',
+      buyerEmail: isService ? serviceTarget : (currentUser.email || ''),
+      amount: finalPrice,
+      finalPrice,
+      discount: discountAmount,
+      promoCode: appliedPromoCode,
+      paymentMethod: currentPaymentMethod,
+      paymentProof,
+      status: 'pending_payment',
+      userEmail: currentUser.email || '',
+      userId: currentUser.uid,
+      createdAt: serverTimestamp()
+    });
+
+    document.getElementById('voucher-url-input').value = '';
+    document.getElementById('payment-ref-input').value = '';
+    document.getElementById('success-product-name').innerText = product.name;
     document.getElementById('success-order-id').innerText = `ORDER ID: #${orderId}`;
-
-    const accBox = document.getElementById('success-account-box');
-    const srvBox = document.getElementById('success-service-box');
-
+    document.getElementById('success-service-box').classList.toggle('hidden', !isService);
     if (isService) {
-      if (accBox) accBox.classList.add('hidden');
-      if (srvBox) srvBox.classList.remove('hidden');
       document.getElementById('srv-target-display').innerText = serviceTarget;
       document.getElementById('srv-qty-display').innerText = `${qty} ${unit}`;
-    } else {
-      if (srvBox) srvBox.classList.add('hidden');
-      if (accBox) accBox.classList.remove('hidden');
-      isPasswordRevealed = false;
-      document.getElementById('acc-username').innerText = currentDeliveredUsername;
-      document.getElementById('acc-password').innerText = '••••••••••••••••';
-      document.getElementById('pw-toggle-label').innerText = 'แสดงรหัสผ่าน';
     }
-
-    document.getElementById('nav-cart-text').innerText = '฿0.00';
     navigateTo('success');
-    triggerToast('ชำระเงินสำเร็จ ระบบได้จัดสรรคำสั่งซื้อให้คุณเรียบร้อย');
-    updateMyOrdersBadge();
-  }, 800);
-}
-
-function simulateVoucherPayment() {
-  const url = document.getElementById('voucher-url-input').value.trim();
-  if (!url.includes('truemoney.com') && url.length < 15) {
-    triggerToast('กรุณากรอกลิงก์ซองของขวัญ TrueMoney ให้ถูกต้อง');
-    return;
-  }
-
-  triggerToast('กำลังตรวจสอบยอดเงินในซองของขวัญ...');
-  setTimeout(() => {
-    document.getElementById('voucher-url-input').value = '';
-    simulateOrderSuccess();
-  }, 1000);
-}
-
-function togglePasswordVisibility() {
-  isPasswordRevealed = !isPasswordRevealed;
-  const pwText = document.getElementById('acc-password');
-  const toggleLabel = document.getElementById('pw-toggle-label');
-  
-  if (isPasswordRevealed) {
-    pwText.innerText = currentDeliveredPassword;
-    toggleLabel.innerText = 'ซ่อนรหัส';
-  } else {
-    pwText.innerText = '••••••••••••••••';
-    toggleLabel.innerText = 'แสดงรหัสผ่าน';
+  } catch (err) {
+    console.error('Submit order failed:', err);
+    triggerToast('ส่งคำสั่งซื้อไม่สำเร็จ กรุณาลองอีกครั้ง');
+  } finally {
+    isSubmitting = false;
+    setSubmitButtonsDisabled(false);
   }
 }
 
@@ -1412,61 +1002,23 @@ function copyTextToClipboard(text) {
   }
 }
 
-function copyCredentials() {
-  copyTextToClipboard(`User: ${currentDeliveredUsername}\nPass: ${currentDeliveredPassword}`);
-  const copyLabel = document.getElementById('copy-btn-text');
-  if (copyLabel) {
-    copyLabel.innerText = 'คัดลอกข้อมูลเรียบร้อยแล้ว!';
-    triggerToast('คัดลอก Username & Password เรียบร้อยแล้ว!');
-    setTimeout(() => {
-      copyLabel.innerText = 'คัดลอก Username & Password ทั้งหมด';
-    }, 2500);
-  }
-}
-
 // ==========================================
-// 6. CUSTOMER "MY ORDERS" HISTORY (LOCAL + CLOUD MERGE)
+// 6. CUSTOMER "MY ORDERS" HISTORY (LIVE FROM FIRESTORE)
 // ==========================================
-function getLocalOrders() {
-  try {
-    const raw = localStorage.getItem('tactical_my_orders');
-    const parsed = raw ? JSON.parse(raw) : [];
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
-}
-
-function saveOrderToLocal(order) {
-  try {
-    const list = getLocalOrders();
-    list.unshift(order);
-    localStorage.setItem('tactical_my_orders', JSON.stringify(list));
-  } catch (err) {
-    console.warn("Local storage error:", err);
-  }
-}
-
 function getMergedOrders() {
-  const local = getLocalOrders();
-  const seen = new Set();
-  const merged = [];
-
-  [...local, ...cloudOrdersCache].forEach(ord => {
-    const key = ord.orderNumber || ord.orderId || `${ord.productId}_${ord.createdAt}`;
-    if (!seen.has(key)) {
-      seen.add(key);
-      merged.push(ord);
-    }
-  });
-  return merged;
+  return [...cloudOrdersCache].sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
 }
 
-async function syncUserCloudOrders(uid) {
+function findOrder(key) {
+  return getMergedOrders().find(o => (o.orderNumber || o.orderId) === key) || {};
+}
+
+// Live listener so a pending order flips to "completed" (with credentials) without a reload.
+function syncUserCloudOrders(uid) {
+  if (unsubOrders) unsubOrders();
+  unsubOrders = null;
   if (!db || !uid) return;
-  try {
-    const q = query(collection(db, "orders"), where("userId", "==", uid));
-    const snap = await getDocs(q);
+  unsubOrders = onSnapshot(query(collection(db, "orders"), where("userId", "==", uid)), (snap) => {
     cloudOrdersCache = snap.docs.map(d => {
       const data = d.data();
       return {
@@ -1475,9 +1027,7 @@ async function syncUserCloudOrders(uid) {
       };
     });
     updateMyOrdersBadge();
-  } catch (err) {
-    console.warn("Cloud orders sync skipped:", err);
-  }
+  }, (err) => console.warn("Cloud orders sync skipped:", err));
 }
 
 function updateMyOrdersBadge() {
@@ -1492,6 +1042,11 @@ function updateMyOrdersBadge() {
     }
   }
 }
+
+const ORDER_STATUS_LABEL = {
+  pending_payment: 'รอตรวจสอบการชำระเงิน',
+  cancelled: 'ยกเลิกแล้ว'
+};
 
 function openMyOrdersModal() {
   const modal = document.getElementById('my-orders-modal');
@@ -1510,36 +1065,25 @@ function openMyOrdersModal() {
     empty.classList.remove('flex');
     container.innerHTML = orders.map((ord, idx) => {
       const orderNo = escapeHtml(ord.orderNumber || ord.orderId || '-');
+      const keyArg = escapeHtml(JSON.stringify(String(ord.orderNumber || ord.orderId || '')));
       const priceVal = Number(ord.amount ?? ord.finalPrice ?? 0).toFixed(2);
       const timeStr = ord.createdAt ? escapeHtml(new Date(ord.createdAt).toLocaleString('th-TH')) : '';
       const isSrv = ord.productType === 'service';
-      const userVal = escapeHtml(ord.accountDelivered?.username || ord.credentials?.user || ord.buyerEmail || '-');
+      const isDone = ord.status === 'completed';
+      const statusLabel = escapeHtml(isDone ? (isSrv ? 'รับงานแล้ว' : 'จัดส่งสำเร็จ') : (ORDER_STATUS_LABEL[ord.status] || ord.status || '-'));
+      const userVal = escapeHtml(ord.accountDelivered?.username || '-');
+      const target = escapeHtml(ord.buyerEmail || '-');
       const prodName = escapeHtml(ord.productName || '-');
       const srvQty = escapeHtml(ord.quantity || 1);
       const srvUnit = escapeHtml(ord.unit || 'กอง');
 
-      return `
-        <div class="apple-card p-4 sm:p-5 border border-hairline space-y-3 bg-gallery">
-          <div class="flex justify-between items-start gap-2 border-b border-hairline pb-2.5">
-            <div>
-              <span class="text-[10px] font-mono text-appleBlue font-medium">#${orderNo}</span>
-              <h4 class="font-semibold text-ink text-sm">${prodName}</h4>
-              ${timeStr ? `<span class="text-[10px] text-slate">${timeStr}</span>` : ''}
+      // Credentials are only ever shown once the backend has marked the order completed.
+      const detail = isSrv ? `
+            <div class="bg-mist p-3 rounded-nav border border-hairline text-xs text-ink">
+              ผู้รับบริการ: <span class="font-mono font-semibold">${target}</span> • จำนวน: <strong>${srvQty} ${srvUnit}</strong>
             </div>
-            <div class="text-right">
-              <span class="text-sm font-semibold text-pricingBlue">฿${priceVal}</span>
-              <span class="block text-[10px] text-emerald-600 font-medium">
-                ${isSrv ? '⚡ งานบริการ' : 'จัดส่งสำเร็จ'}
-              </span>
-            </div>
-          </div>
-
-          ${isSrv ? `
-            <div class="bg-mist p-3 rounded-2xl border border-hairline text-xs text-ink">
-              ผู้รับบริการ: <span class="font-mono font-semibold">${userVal}</span> • จำนวน: <strong>${srvQty}${srvUnit}</strong>
-            </div>
-          ` : `
-            <div class="bg-mist p-3 rounded-2xl border border-hairline font-mono text-xs space-y-1.5">
+          ` : (isDone && ord.accountDelivered?.username ? `
+            <div class="bg-mist p-3 rounded-nav border border-hairline font-mono text-xs space-y-1.5">
               <div class="flex items-center justify-between">
                 <span class="text-slate text-[10px]">USERNAME:</span>
                 <span class="text-ink font-semibold select-all">${userVal}</span>
@@ -1550,14 +1094,33 @@ function openMyOrdersModal() {
               </div>
             </div>
             <div class="flex items-center justify-end gap-2 pt-1">
-              <button type="button" onclick="toggleOrderPassword(${idx})" class="apple-explore-pill px-3 py-1 text-[11px]">
+              <button type="button" onclick="toggleOrderPassword(${keyArg}, ${idx})" class="apple-explore-pill px-3 py-1 text-[11px]">
                 <span id="order-btn-lbl-${idx}">แสดงรหัส</span>
               </button>
-              <button type="button" onclick="copySpecificCredentials(${idx})" class="apple-pricing-pill px-3 py-1 text-[11px]">
+              <button type="button" onclick="copySpecificCredentials(${keyArg})" class="apple-pricing-pill px-3 py-1 text-[11px]">
                 คัดลอกไอดี
               </button>
             </div>
-          `}
+          ` : `
+            <div class="bg-mist p-3 rounded-nav border border-hairline text-xs text-slate">
+              ไอดีจะแสดงที่นี่เมื่อทีมงานยืนยันการชำระเงินแล้ว
+            </div>
+          `);
+
+      return `
+        <div class="apple-card p-4 sm:p-5 border border-hairline space-y-3 bg-gallery">
+          <div class="flex justify-between items-start gap-2 border-b border-hairline pb-2.5">
+            <div>
+              <span class="text-[10px] font-mono text-appleBlue font-medium">#${orderNo}</span>
+              <h4 class="font-semibold text-ink text-sm">${prodName}</h4>
+              ${timeStr ? `<span class="text-[10px] text-slate">${timeStr}</span>` : ''}
+            </div>
+            <div class="text-right">
+              <span class="text-sm font-semibold text-ink">฿${priceVal}</span>
+              <span class="block text-[10px] text-slate font-medium">${statusLabel}</span>
+            </div>
+          </div>
+          ${detail}
         </div>
       `;
     }).join('');
@@ -1575,10 +1138,8 @@ function closeMyOrdersModal() {
   }
 }
 
-function toggleOrderPassword(idx) {
-  const orders = getMergedOrders();
-  const ord = orders[idx] || {};
-  const realPw = String(ord.accountDelivered?.password || ord.credentials?.pass || ord.buyerPassword || '-');
+function toggleOrderPassword(key, idx) {
+  const realPw = String(findOrder(key).accountDelivered?.password || '-');
   const el = document.getElementById(`order-pw-${idx}`);
   const lbl = document.getElementById(`order-btn-lbl-${idx}`);
   if (!el || !lbl) return;
@@ -1594,50 +1155,15 @@ function toggleOrderPassword(idx) {
   }
 }
 
-function copySpecificCredentials(idx) {
-  const orders = getMergedOrders();
-  const ord = orders[idx] || {};
-  const u = ord.accountDelivered?.username || ord.credentials?.user || ord.buyerEmail || '-';
-  const p = ord.accountDelivered?.password || ord.credentials?.pass || ord.buyerPassword || '-';
-  copyTextToClipboard(`User: ${u}\nPass: ${p}`);
+function copySpecificCredentials(key) {
+  const acc = findOrder(key).accountDelivered;
+  if (!acc?.username) return;
+  copyTextToClipboard(`User: ${acc.username}\nPass: ${acc.password}`);
   triggerToast('คัดลอกข้อมูลไอดีนี้เรียบร้อยแล้ว!');
 }
 
 // ==========================================
-// 7. LIVE ORDER NOTIFICATION TICKER
-// ==========================================
-function startLiveOrderTicker() {
-  const sampleTickerItems = [
-    { product: 'M4A1 Full Mod + T6 Ammo', price: '฿350.00', mins: 2 },
-    { product: 'Starter Koen 15 Million', price: '฿150.00', mins: 5 },
-    { product: 'บริการโยนกระสุน M61 x5 กอง', price: '฿110.00', mins: 6 },
-    { product: 'FAL Full Mod + M61 (T6)', price: '฿420.00', mins: 8 },
-    { product: 'Mega Wealthy Koen 100M', price: '฿1,190.00', mins: 12 }
-  ];
-
-  let tickerIdx = 0;
-  setInterval(() => {
-    const item = sampleTickerItems[tickerIdx % sampleTickerItems.length];
-    tickerIdx++;
-
-    const tickerEl = document.getElementById('live-order-ticker');
-    const prodEl = document.getElementById('ticker-product');
-    const priceEl = document.getElementById('ticker-price');
-    const timeEl = document.getElementById('ticker-time');
-
-    if (!tickerEl || !prodEl || !priceEl || !timeEl) return;
-
-    prodEl.innerText = `ลูกค้าเพิ่งสั่งซื้อ: ${item.product}`;
-    priceEl.innerText = `จัดส่งสำเร็จ • ${item.price}`;
-    timeEl.innerText = `เมื่อ ${item.mins} นาทีที่แล้ว`;
-
-    tickerEl.classList.remove('hidden');
-    setTimeout(() => tickerEl.classList.add('hidden'), 6000);
-  }, 24000);
-}
-
-// ==========================================
-// 8. NAVIGATION VIEW CONTROLLER
+// 7. NAVIGATION VIEW CONTROLLER
 // ==========================================
 function navigateTo(viewName) {
   const storeView = document.getElementById('view-store');
@@ -1655,22 +1181,22 @@ function navigateTo(viewName) {
     storeView.classList.remove('hidden');
     selectedProduct = null;
     discountAmount = 0;
+    promoDiscountFn = null;
     appliedPromoCode = null;
     const cartText = document.getElementById('nav-cart-text');
     if (cartText) cartText.innerText = '฿0.00';
-    stopTimer();
   } else if (viewName === 'checkout' && checkoutView) {
     checkoutView.classList.remove('hidden');
   } else if (viewName === 'success' && successView) {
     successView.classList.remove('hidden');
     successView.classList.add('flex');
-    stopTimer();
+    document.getElementById('nav-cart-text').innerText = '฿0.00';
   }
   window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
 // ==========================================
-// 9. ATTACH TO WINDOW & INITIALIZE
+// 8. ATTACH TO WINDOW & INITIALIZE
 // ==========================================
 Object.assign(window, {
   navigateTo,
@@ -1689,10 +1215,7 @@ Object.assign(window, {
   adjustServiceQty,
   applyPromoCode,
   switchPaymentTab,
-  simulateOrderSuccess,
-  simulateVoucherPayment,
-  togglePasswordVisibility,
-  copyCredentials,
+  submitOrder,
   handleSignOut,
   openMyOrdersModal,
   closeMyOrdersModal,
@@ -1706,7 +1229,6 @@ window.addEventListener('DOMContentLoaded', () => {
   initAuthListener();
   initFirebaseProductsListener();
   initSettingsListener();
-  startLiveOrderTicker();
 
   ['my-orders-modal', 'product-detail-modal'].forEach(id => {
     const el = document.getElementById(id);

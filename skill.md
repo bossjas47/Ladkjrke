@@ -20,25 +20,11 @@
 - **Customer Retrieval:** ลูกค้าสามารถตรวจสอบรหัสผ่านของไอดีที่ตนเองเคยซื้อสำเร็จได้ในหน้า **"บัญชีของฉัน" (`front/account.html`)**
 
 ### 1.3 Firestore Security Rules (กฎความปลอดภัยฐานข้อมูล)
-```javascript
-rules_version = '2';
-service cloud.firestore {
-  match /databases/{database}/documents {
-    match /products/{productId} {
-      allow read: if true;
-      allow write: if request.auth != null;
-    }
-    match /orders/{orderId} {
-      allow create: if true;
-      allow read: if request.auth != null && (resource.data.userId == request.auth.uid || request.auth.token.admin == true);
-      allow update, delete: if request.auth != null && request.auth.token.admin == true;
-    }
-    match /inventory_vault/{vaultId} {
-      allow read, write: if false;
-    }
-  }
-}
-```
+กฎที่ใช้จริงอยู่ในไฟล์ `firestore.rules` (ไฟล์นั้นเป็นฉบับอ้างอิงเดียว อย่าก๊อปกฎมาไว้ที่นี่):
+- ลูกค้าสร้างได้เฉพาะออเดอร์สถานะ `pending_payment` ของตัวเอง ห้ามตั้งสถานะหรือไอดีที่ส่งมอบเอง
+- แอดมินคือผู้ใช้ที่มี custom claim `admin: true` เท่านั้น (ไม่ใช้อีเมลตัดสิน)
+- `stock_items`, `system_private`, `system_settings` เปิดให้แอดมินเท่านั้น; `inventory_vault` ปิดทุก client
+- ยอดกระเป๋าเงิน (`users`) แก้ได้เฉพาะแอดมิน
 
 ### 1.4 Anti-Abuse & Rate Limiting (การป้องกันการโจมตี)
 - **Promo Code Rate Limit:** จำกัดความถี่การกรอกโค้ดส่วนลด (ไม่เกิน 5 ครั้ง/นาที) เพื่อกัน Brute-force สุ่มโค้ด
