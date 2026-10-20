@@ -1,143 +1,286 @@
 import { db, auth } from "../firebase-config.js";
-import { 
-  collection, 
-  doc, 
-  addDoc, 
-  getDoc,
-  getDocs,
-  setDoc, 
-  updateDoc,
-  deleteDoc,
-  writeBatch,
-  onSnapshot, 
-  query,
-  where,
-  limit,
-  runTransaction,
-  serverTimestamp,
-  increment
+import {
+  collection, doc, getDoc, getDocs, setDoc, updateDoc, deleteDoc, writeBatch, onSnapshot, query, where, limit,
+  runTransaction, Timestamp, serverTimestamp, increment, deleteField
 } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
-import { 
-  onAuthStateChanged, 
-  signOut 
-} from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
+import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
+import { watchCategories, KIND_LABEL, categoryOf, isServiceProduct, minQtyOf, unitOf } from "./categories.js";
+import { esc, num, money, toast, fmtDate, openModal, closeModal, compressImage, maskName } from "./ui.js";
 
 /**
- * TACTICAL STORE — Master Controller (js/index.js)
- * รวมระบบทั้งหน้าร้านค้า (Storefront) และระบบจัดการหลังบ้าน (Admin Dashboard + Stock Vault)
+ * ASTRAPHEX HUB — back office. The real gate is the Firebase custom claim admin:true (firestore.rules);
+ * the PIN is only a screen lock. Sections: products & stock, categories, orders, top-ups & promotions,
+ * users, promo codes (js/back/code.js), settings.
  */
+const $ = (id) => document.getElementById(id);
+const adminEsc = esc;
+const triggerToast = (m, kind) => toast(m, kind);
+window.triggerToast = triggerToast;
+const tsMs = (v) => v?.toMillis?.() ?? (v ? new Date(v).getTime() : 0);
+
+// Phone layout of the tables (see .admin-table in admin.html): copy each column title onto the cells of its rows.
+function labelTable(table) {
+  const heads = [...table.querySelectorAll('thead th')].map(th => th.textContent.trim());
+  table.querySelectorAll('tbody tr').forEach(tr => [...tr.children].forEach((td, i) => { if (td.tagName === 'TD' && td.colSpan < 2 && heads[i] && td.dataset.label !== heads[i]) td.dataset.label = heads[i]; }));
+}
+document.querySelectorAll('.admin-table').forEach(table => {
+  labelTable(table);
+  const body = table.querySelector('tbody');
+  if (body) new MutationObserver(() => labelTable(table)).observe(body, { childList: true });
+});
+
+/** Per-person permissions (custom claim `perms`); admins can do everything. Mirrors firestore.rules + the Worker. */
+const PERM_LABEL = { orders: 'ทำคิวงานบริการ (เริ่มงาน/ส่งมอบ/หมายเหตุ)', pay: 'ยืนยันชำระ ยกเลิก/คืนเงิน ดูสลิป เติมเงิน (ทุกออเดอร์)', products: 'สินค้า สต็อก หมวดหมู่', promos: 'โค้ดส่วนลด และโปรเติมเงิน', rentals: 'ไอดีเช่า', boxes: 'กล่องสุ่ม', vault: 'โปรแกรมไอดีไก่', users: 'ผู้ใช้ (ดู/ปรับเครดิต/ข้อมูลติดต่อ)' };
+let ADMIN = false, PERMS = new Set();
+const can = (p) => ADMIN || PERMS.has(p);
+const STAFF_ONLY_QUEUE = () => !ADMIN && !can('pay'); // can work service jobs but not handle money
+const TAB_OK = { dashboard: () => ADMIN, settings: () => ADMIN, products: () => can('products'), categories: () => can('products'), orders: () => can('orders') || can('pay'), topups: () => can('pay'), rentals: () => can('rentals'), boxes: () => can('boxes'), vault: () => can('vault'), users: () => can('users'), promos: () => can('promos') };
+const tabOk = (t) => (TAB_OK[t] || (() => false))();
+let PRODUCTS = [], CATS = [], ORDERS = [], TOPUPS = [], USERS = [], TPROMOS = [], RENTALS = [], STATS = {}, SETTINGS = {};
+let rentalFilter = 'todo';
+let me = null;
+
+const formatUrl = (url) => {
+  const s = String(url || '').trim();
+  if (s && !/^https?:\/\//i.test(s) && !s.startsWith('/') && !s.startsWith('#') && !s.startsWith('data:')) return 'https://' + s;
+  return s;
+};
+const workerUrl = () => String(SETTINGS.slipWorkerUrl || '').trim().replace(/\/+$/, '');
+async function callWorker(path, body) {
+  if (!workerUrl()) throw new Error('ยังไม่ได้ตั้งค่า URL ของ Worker (ตั้งค่าร้าน › ระบบอัตโนมัติ)');
+  const res = await fetch(workerUrl() + path, { method: 'POST', headers: { authorization: 'Bearer ' + await auth.currentUser.getIdToken(), 'content-type': 'application/json' }, body: JSON.stringify(body) });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || data.message || `Worker ตอบกลับ ${res.status}`);
+  return data;
+}
 
 // ==========================================
-// 1. DEFAULT DATA & REPOSITORY
+// GATE: admin claim, then PIN screen lock
 // ==========================================
-const DEFAULT_PRODUCTS = [
-  {
-    id: '1',
-    name: 'M4A1 Full Mod + T6 Ammo x300',
-    category: 'ammo_acc',
-    price: 350.00,
-    koen: '5,500,000',
-    stock: 12,
-    image: 'https://images.unsplash.com/photo-1595590424283-b8f1784cb2c8?auto=format&fit=crop&q=80&w=800',
-    gallery: [
-      'https://images.unsplash.com/photo-1595590424283-b8f1784cb2c8?auto=format&fit=crop&q=80&w=800',
-      'https://images.unsplash.com/photo-1574226516831-e1dff420e5c7?auto=format&fit=crop&q=80&w=800',
-      'https://images.unsplash.com/photo-1612287230202-1ff1d85d1bdf?auto=format&fit=crop&q=80&w=800'
-    ],
-    tags: ['Best Seller', 'พร้อมบวก'],
-    desc: 'ปืน M4A1 ฟูลม็อดแต่งลดแรงถีบสูงสุด พร้อมกระสุนระดับ T6 M995 เจาะเกราะทะลวงระดับพระกาฬ x300 นัด พร้อมเล่นทันที',
-    specs: ['เกราะ T5 ครบชุด', 'กระสุน T6 x300', 'Koen เงินสด 5.5M', 'กระเป๋า 28 ช่อง']
-  },
-  {
-    id: '2',
-    name: 'Starter Koen Account (15 Million)',
-    category: 'koen',
-    price: 150.00,
-    koen: '15,000,000',
-    stock: 45,
-    image: 'https://images.unsplash.com/photo-1612287230202-1ff1d85d1bdf?auto=format&fit=crop&q=80&w=800',
-    gallery: [
-      'https://images.unsplash.com/photo-1612287230202-1ff1d85d1bdf?auto=format&fit=crop&q=80&w=800',
-      'https://images.unsplash.com/photo-1633158829585-23ba8f7c8caf?auto=format&fit=crop&q=80&w=800'
-    ],
-    tags: ['สายฟาร์ม', 'คุ้มสุด'],
-    desc: 'ไอดีเปล่าเริ่มต้นที่มีเงิน Koen สะสม 15 ล้านในคลัง ไม่เคยโดนแบน ผูกอีเมลสะอาดพร้อมโอนกรรมสิทธิ์',
-    specs: ['Koen สะสม 15,000,000', 'เลเวล 12+', 'ไม่เคยติดโทษแบน', 'เปลี่ยนอีเมลได้ทันที']
-  },
-  {
-    id: '3',
-    name: 'Sniper God Tier (AX50 + T7 Thermal)',
-    category: 'full_acc',
-    price: 890.00,
-    koen: '30,000,000',
-    stock: 0,
-    image: 'https://images.unsplash.com/photo-1585098906517-8e1008d58544?auto=format&fit=crop&q=80&w=800',
-    gallery: [
-      'https://images.unsplash.com/photo-1585098906517-8e1008d58544?auto=format&fit=crop&q=80&w=800',
-      'https://images.unsplash.com/photo-1595590424283-b8f1784cb2c8?auto=format&fit=crop&q=80&w=800'
-    ],
-    tags: ['Premium', 'เทพสไน'],
-    desc: 'เซ็ตสไนเปอร์ระดับสูงสุด AX50 ติดกล้องความร้อน T7 มองทะลุหมอกและใบไม้ เงินสดในตัว 30M เหมาะสำหรับสายซุ่มแนวหลัง',
-    specs: ['สไนเปอร์ AX50 Mod เต็ม', 'กล้อง T7 Thermal', 'กระสุน T7 x100', 'Koen เงินสด 30M']
-  },
-  {
-    id: '4',
-    name: 'FAL Full Mod + M61 (T6) x300',
-    category: 'ammo_acc',
-    price: 420.00,
-    koen: '8,000,000',
-    stock: 7,
-    image: 'https://images.unsplash.com/photo-1550985542-f28329b3a364?auto=format&fit=crop&q=80&w=800',
-    gallery: [
-      'https://images.unsplash.com/photo-1550985542-f28329b3a364?auto=format&fit=crop&q=80&w=800',
-      'https://images.unsplash.com/photo-1595590424283-b8f1784cb2c8?auto=format&fit=crop&q=80&w=800'
-    ],
-    tags: ['ดาเมจจัด', 'ยอดนิยม'],
-    desc: 'FAL แต่งเต็มคุมแรงถีบขั้นสุด บรรจุกระสุน M61 เจาะเกราะหนัก 2 นัดร่วงทุกรายใน Kamona',
-    specs: ['FAL Full Mod Recoil ต่ำ', 'กระสุน M61 T6 x300', 'เกราะ T6 พร้อมหมวก', 'Koen เงินสด 8M']
-  },
-  {
-    id: '5',
-    name: 'Mega Wealthy Koen (100 Million)',
-    category: 'koen',
-    price: 1190.00,
-    koen: '100,000,000',
-    stock: 3,
-    image: 'https://images.unsplash.com/photo-1633158829585-23ba8f7c8caf?auto=format&fit=crop&q=80&w=800',
-    gallery: [
-      'https://images.unsplash.com/photo-1633158829585-23ba8f7c8caf?auto=format&fit=crop&q=80&w=800',
-      'https://images.unsplash.com/photo-1612287230202-1ff1d85d1bdf?auto=format&fit=crop&q=80&w=800'
-    ],
-    tags: ['มหาเศรษฐี', 'VIP'],
-    desc: 'เงินสด Koen 100 ล้าน ซื้อได้ทุกอย่างในตลาดกลาง จัดเป็นไอดีสายสะสมหรือเปิดคลังบวกยาวตลอดทั้งซีซั่น',
-    specs: ['Koen 100,000,000 เต็ม', 'กล่องเซฟใหญ่ 3x3', 'ปลดล็อกพ่อค้าทุกตัว', 'รับประกันตลอดชีพ']
-  },
-  {
-    id: '6',
-    name: 'Budget Runner Set + MPX 9mm 7N31',
-    category: 'full_acc',
-    price: 120.00,
-    koen: '3,000,000',
-    stock: 18,
-    image: 'https://images.unsplash.com/photo-1574226516831-e1dff420e5c7?auto=format&fit=crop&q=80&w=800',
-    gallery: [
-      'https://images.unsplash.com/photo-1574226516831-e1dff420e5c7?auto=format&fit=crop&q=80&w=800',
-      'https://images.unsplash.com/photo-1595590424283-b8f1784cb2c8?auto=format&fit=crop&q=80&w=800'
-    ],
-    tags: ['สายประหยัด', 'วิ่งไว'],
-    desc: 'เซ็ตวิ่งฟาร์มของไว ปืน SMG MPX ยิงไว ดาเมจทะลุเกราะ 7N31 ของครบตัวพร้อมลุย',
-    specs: ['MPX Full Mod ไวสุด', 'กระสุน 7N31 x250', 'เกราะเบา T4 วิ่งเร็ว', 'Koen เงินสด 3M']
+let currentSecurityDoc = null, failedAttempts = 0, lockoutTimer = null, started = false;
+async function hashPinWithSalt(pin, salt) {
+  const h = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(pin + ':' + salt + ':TACTICAL_PIN_VAULT_2026'));
+  return [...new Uint8Array(h)].map(b => b.toString(16).padStart(2, '0')).join('');
+}
+const randomSalt = () => [...crypto.getRandomValues(new Uint8Array(16))].map(b => b.toString(16).padStart(2, '0')).join('');
+function gateState(name) { ['loading', 'noauth', 'setup', 'unlock'].forEach(k => $(`pin-state-${k}`)?.classList.toggle('hidden', k !== name)); }
+
+onAuthStateChanged(auth, async (user) => {
+  me = user;
+  if (!user) { gateState('noauth'); return; }
+  let claims = {};
+  try { claims = (await user.getIdTokenResult(true)).claims; } catch (_) {}
+  const isAdmin = claims.admin === true;
+  ADMIN = isAdmin; PERMS = new Set(Array.isArray(claims.perms) ? claims.perms : []);
+  if (!isAdmin && !PERMS.size) {
+    $('noauth-title').textContent = '403 · ไม่มีสิทธิ์เข้าถึง';
+    $('noauth-text').textContent = `บัญชี ${user.displayName || user.email} ไม่ใช่ผู้ดูแลระบบ`;
+    $('noauth-login').textContent = 'กลับหน้าร้าน'; $('noauth-login').href = '../home.html';
+    gateState('noauth');
+    return;
   }
-];
+  $('admin-who').textContent = `${ADMIN ? 'แอดมิน' : 'ทีมงาน'}: ${user.displayName || user.email}`;
+  if (!ADMIN) { unlockDashboardUI(); return; } // delegated accounts skip the admin PIN (they cannot read it)
+  if (sessionStorage.getItem('astraphex_admin_unlocked') === 'true') { unlockDashboardUI(); return; }
+  try {
+    const pin = await getDoc(doc(db, 'system_settings', 'admin_pin'));
+    currentSecurityDoc = pin.exists() ? pin.data() : null;
+  } catch (e) { console.warn('pin:', e); }
+  if (currentSecurityDoc?.pinHash && currentSecurityDoc?.salt) { gateState('unlock'); initPinDigitBoxes(); }
+  else gateState('setup');
+});
 
-const CATEGORIES = [
-  { id: 'all', name: 'ทั้งหมด' },
-  { id: 'ammo_acc', name: 'ไอดีไก่กระสุน' },
-  { id: 'koen', name: 'ไอดีเงิน Koen' },
-  { id: 'full_acc', name: 'ไอดีพร้อมเล่น' },
-  { id: 'skins', name: 'สกินปืน / เซ็ตชุด' }
-];
+async function handlePinSetupSubmit(e) {
+  e.preventDefault();
+  const p1 = $('setup-pin-val').value.trim(), p2 = $('setup-pin-confirm').value.trim();
+  if (!/^\d{6}$/.test(p1)) return triggerToast('PIN ต้องเป็นตัวเลข 6 หลัก', 'error');
+  if (p1 !== p2) return triggerToast('PIN ทั้งสองช่องไม่ตรงกัน', 'error');
+  const salt = randomSalt();
+  try {
+    await setDoc(doc(db, 'system_settings', 'admin_pin'), { pinHash: await hashPinWithSalt(p1, salt), salt, updatedAt: serverTimestamp(), setBy: me?.uid || '' });
+    sessionStorage.setItem('astraphex_admin_unlocked', 'true');
+    unlockDashboardUI();
+  } catch (err) { triggerToast('บันทึก PIN ไม่สำเร็จ', 'error'); }
+}
+async function handlePinUnlockSubmit(e) {
+  e?.preventDefault();
+  if (failedAttempts >= 5) return triggerToast('ล็อกชั่วคราว กรุณารอสักครู่', 'error');
+  const digits = [...document.querySelectorAll('.pin-digit-input')].map(i => i.value).join('');
+  if (digits.length !== 6) return triggerToast('กรุณากรอก PIN ให้ครบ 6 หลัก', 'error');
+  if (await hashPinWithSalt(digits, currentSecurityDoc.salt) === currentSecurityDoc.pinHash) {
+    failedAttempts = 0;
+    sessionStorage.setItem('astraphex_admin_unlocked', 'true');
+    unlockDashboardUI();
+    return;
+  }
+  failedAttempts++;
+  $('pin-error-msg')?.classList.remove('hidden');
+  document.querySelectorAll('.pin-digit-input').forEach(i => { i.value = ''; });
+  document.querySelector('.pin-digit-input')?.focus();
+  if (failedAttempts >= 5) {
+    $('pin-lockout-msg')?.classList.remove('hidden'); $('btn-pin-submit').disabled = true;
+    let left = 60; clearInterval(lockoutTimer);
+    lockoutTimer = setInterval(() => { left--; $('pin-lockout-timer').textContent = left; if (left <= 0) { clearInterval(lockoutTimer); failedAttempts = 0; $('pin-lockout-msg').classList.add('hidden'); $('btn-pin-submit').disabled = false; } }, 1000);
+  } else triggerToast(`PIN ไม่ถูกต้อง (เหลือ ${5 - failedAttempts} ครั้ง)`, 'error');
+}
+function initPinDigitBoxes() {
+  const inputs = document.querySelectorAll('.pin-digit-input');
+  inputs.forEach((input, i) => {
+    input.oninput = (e) => { if (e.target.value.length === 1 && i < inputs.length - 1) inputs[i + 1].focus(); if ([...inputs].every(x => x.value.length === 1)) handlePinUnlockSubmit(null); };
+    input.onkeydown = (e) => { if (e.key === 'Backspace' && !e.target.value && i > 0) inputs[i - 1].focus(); };
+  });
+  inputs[0]?.focus();
+}
+async function promptResetPin() {
+  if (!confirm('รีเซ็ตรหัส PIN แล้วตั้งใหม่?')) return;
+  try { await deleteDoc(doc(db, 'system_settings', 'admin_pin')); } catch (_) {}
+  sessionStorage.removeItem('astraphex_admin_unlocked');
+  location.reload();
+}
+function lockAdminSession() { sessionStorage.removeItem('astraphex_admin_unlocked'); location.reload(); }
 
+function unlockDashboardUI() {
+  $('admin-auth-gate')?.classList.add('hidden');
+  $('admin-main-content')?.classList.remove('hidden');
+  if (started) return;
+  started = true;
+  // admins made with scripts/set-admin-claim.js have no role field yet; record it for the users list
+  if (ADMIN && me) setDoc(doc(db, 'users', me.uid), { role: 'admin' }, { merge: true }).catch(() => {});
+  startListeners();
+  const saved = sessionStorage.getItem('astraphex_admin_tab');
+  switchAdminTab(saved && tabOk(saved) ? saved : ['orders', 'products', 'topups', 'users', 'promos', 'rentals', 'boxes', 'vault'].find(tabOk) || 'orders');
+}
+
+function startListeners() {
+  if (can('boxes')) window.startBoxWatch?.(); // loot-box opens feed the dashboard too (js/back/boxes.js)
+  document.addEventListener('boxopens', () => renderDashboard());
+  const warn = (what) => (e) => { console.warn(what, e); triggerToast(`โหลด${what}ไม่สำเร็จ`, 'error'); };
+  if (can('products') || can('boxes') || can('promos')) onSnapshot(collection(db, 'products'), (s) => { PRODUCTS = s.docs.map(d => ({ ...d.data(), id: d.id })); renderAdminProducts(); updateAdminMetrics(); renderAdminCategories(); renderDashboard(); }, warn('สินค้า'));
+  if (can('products') || can('boxes') || can('promos')) watchCategories((list) => { CATS = list; renderAdminCategories(); fillProductCategorySelect(); renderAdminProducts(); });
+  if (can('pay')) onSnapshot(collection(db, 'orders'), (s) => { ORDERS = s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => tsMs(b.createdAt) - tsMs(a.createdAt)); renderAdminOrders(); renderBadges(); }, warn('ออเดอร์'));
+  if (can('pay')) onSnapshot(collection(db, 'topup_transactions'), (s) => { TOPUPS = s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => tsMs(b.createdAt) - tsMs(a.createdAt)); renderAdminTopups(); renderBadges(); }, warn('รายการเติมเงิน'));
+  if (can('rentals')) onSnapshot(collection(db, 'rentals'), (s) => { RENTALS = s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => tsMs(b.createdAt) - tsMs(a.createdAt)); renderAdminRentals(); renderBadges(); }, warn('การเช่า'));
+  if (can('users') || can('vault')) onSnapshot(collection(db, 'users'), (s) => { USERS = s.docs.map(d => ({ uid: d.id, ...d.data() })).sort((a, b) => tsMs(b.createdAt) - tsMs(a.createdAt)); renderAdminUsers(); renderDashboard(); document.dispatchEvent(new Event('adminusers')); }, warn('ผู้ใช้'));
+  if (can('promos')) onSnapshot(collection(db, 'topup_promos'), (s) => { TPROMOS = s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => num(a.minAmount) - num(b.minAmount)); renderTopupPromos(); });
+  onSnapshot(doc(db, 'stats', 'public'), (s) => { STATS = s.exists() ? s.data() : {}; renderStatHints(); });
+  onSnapshot(doc(db, 'system', 'settings'), (s) => { const first = !Object.keys(SETTINGS).length; SETTINGS = s.exists() ? s.data() : {}; if (first) loadAdminSettings(); });
+  onSnapshot(doc(db, 'system', 'promptpay_qr'), (s) => { const img = s.exists() ? s.data().image : ''; $('qr-preview').src = img || SETTINGS.promptpayQrUrl || ''; $('qr-preview').classList.toggle('hidden', !(img || SETTINGS.promptpayQrUrl)); $('qr-preview-empty').classList.toggle('hidden', !!(img || SETTINGS.promptpayQrUrl)); });
+  if (!can('pay') && can('orders')) onSnapshot(query(collection(db, 'orders'), where('productType', '==', 'service')), (s) => { ORDERS = s.docs.map(d => ({ id: d.id, ...d.data() })).sort((a, b) => tsMs(b.createdAt) - tsMs(a.createdAt)); renderAdminOrders(); }, warn('ออเดอร์'));
+}
+
+function renderBadges() {
+  const set = (id, n) => { const el = $(id); if (!el) return; el.textContent = n; el.classList.toggle('hidden', !n); };
+  set('badge-orders', ORDERS.filter(o => o.status === 'pending_payment' || o.status === 'processing').length);
+  set('badge-topups', TOPUPS.filter(t => t.status === 'pending').length);
+  set('badge-rentals', RENTALS.filter(r => r.status === 'returned' || r.status === 'expired').length);
+  renderDashboard();
+}
+
+function switchAdminTab(tab) {
+  if (!tabOk(tab)) return;
+  ['dashboard', 'products', 'categories', 'orders', 'topups', 'users', 'promos', 'rentals', 'boxes', 'vault', 'settings'].forEach(t => {
+    $(`admin-sec-${t}`)?.classList.toggle('hidden', t !== tab);
+    const b = $(`admin-tab-btn-${t}`);
+    if (b) b.className = `px-4 py-1.5 rounded-button text-xs transition-all flex items-center shrink-0 ${t === tab ? 'bg-ink text-gallery' : 'text-slate hover:text-ink'}${tabOk(t) ? '' : ' hidden'}`;
+  });
+  sessionStorage.setItem('astraphex_admin_tab', tab);
+  if (tab === 'promos') window.renderAdminPromos?.();
+  if (tab === 'boxes') { window.startBoxWatch?.(); window.renderAdminBoxes?.(); }
+  if (tab === 'vault') { window.startVaultWatch?.(); window.renderAdminVault?.(); }
+}
+
+// ==========================================
+// PRODUCTS & STOCK
+// ==========================================
+function updateAdminMetrics() {
+  $('metric-total-products').innerText = PRODUCTS.length;
+  $('metric-instock-products').innerText = PRODUCTS.filter(p => num(p.stock) > 0).length;
+  $('metric-outofstock-products').innerText = PRODUCTS.filter(p => num(p.stock) <= 0).length;
+}
+
+function renderAdminProducts(list = null) {
+  const tbody = $('admin-products-table-body');
+  if (!tbody) return;
+  const q = ($('admin-product-search')?.value || '').toLowerCase();
+  const rows = (list || PRODUCTS).filter(p => !q || String(p.name).toLowerCase().includes(q) || String(categoryOf(CATS, p.category)?.name || '').toLowerCase().includes(q) || (p.tags || []).some(t => String(t).toLowerCase().includes(q)));
+  $('admin-products-empty')?.classList.toggle('hidden', rows.length > 0);
+  tbody.innerHTML = rows.map(p => {
+    const out = num(p.stock) <= 0;
+    const id = adminEsc(JSON.stringify(p.id));
+    const srv = isServiceProduct(p, CATS);
+    return `<tr class="border-b border-hairline">
+      <td class="py-3 px-4"><div class="w-14 h-10 rounded-lg overflow-hidden bg-mist border border-hairline"><img src="${adminEsc(p.image)}" alt="" class="w-full h-full object-cover" onerror="this.style.display='none'"></div></td>
+      <td class="py-3 px-4"><div class="font-medium text-ink text-xs line-clamp-1">${p.featured ? '<span class="text-pricingBlue">★</span> ' : ''}${adminEsc(p.name)}</div><div class="text-[11px] text-slate line-clamp-1">${adminEsc(p.desc || '-')}</div></td>
+      <td class="py-3 px-4"><span class="inline-block bg-mist border border-hairline px-2 py-0.5 rounded-full text-[10px] text-slate">${adminEsc(categoryOf(CATS, p.category)?.name || 'ไม่มีหมวดหมู่')}</span>
+        <div class="text-[10px] text-slate mt-0.5">${srv ? `บริการ · ขั้นต่ำ ${minQtyOf(p, CATS)} ${adminEsc(unitOf(p, CATS))}` : (num(p.rentHourPrice) > 0 || (p.rentPackages || []).length) ? 'ไอดีเช่า' : 'ไอดีเกม'}</div></td>
+      <td class="py-3 px-4 font-mono font-semibold">฿${money(p.price)}</td>
+      <td class="py-3 px-4 font-mono text-slate">${adminEsc(p.koen || '-')}</td>
+      <td class="py-3 px-4">${out ? '<span class="text-launchOrange font-semibold text-[11px]">หมด (0)</span>' : `<span class="text-emerald-600 font-semibold text-[11px]">${num(p.stock)} ${srv ? adminEsc(unitOf(p, CATS)) : 'ชิ้น'}</span>`}</td>
+      <td class="py-3 px-4 text-right whitespace-nowrap">
+        <button onclick='toggleFeatured(${id})' title="แสดงเป็นพิเศษหน้าแรก" class="apple-explore-pill px-2.5 py-1 text-[11px] ${p.featured ? 'text-pricingBlue border-pricingBlue' : ''}">${p.featured ? '★ แนะนำ' : '☆ แนะนำ'}</button>
+        ${srv ? '' : `<button onclick='openStockModal(${id})' class="apple-pricing-pill px-3 py-1 text-[11px]">สต็อก ${num(p.stock)}</button>`}
+        <button onclick='openProductModal(${id})' class="apple-explore-pill px-2.5 py-1 text-[11px]">แก้ไข</button>
+        <button onclick='deleteAdminProduct(${id})' class="apple-explore-pill px-2.5 py-1 text-[11px] text-red-500 border-red-200">ลบ</button>
+      </td></tr>`;
+  }).join('');
+}
+const filterAdminProducts = () => renderAdminProducts();
+
+async function toggleFeatured(id) {
+  const p = PRODUCTS.find(x => x.id === id); if (!p) return;
+  try { await updateDoc(doc(db, 'products', id), { featured: !p.featured }); triggerToast(p.featured ? 'นำออกจากสินค้าแนะนำแล้ว' : 'ตั้งเป็นสินค้าแนะนำแล้ว', 'success'); }
+  catch (e) { triggerToast('บันทึกไม่สำเร็จ', 'error'); }
+}
+
+function setProductType(type) {
+  $('prod-type').value = type === 'service' ? 'service' : 'account';
+  const cur = categoryOf(CATS, $('prod-category').value);
+  if (cur && cur.kind !== $('prod-type').value) {
+    const first = CATS.find(c => c.kind === $('prod-type').value);
+    $('prod-category').value = first ? first.id : '';
+  }
+  applyTypeUi();
+}
+function handleCategoryChange(catId) {
+  const cat = categoryOf(CATS, catId);
+  if (cat) $('prod-type').value = cat.kind === 'service' ? 'service' : 'account';
+  applyTypeUi();
+}
+function applyTypeUi() {
+  const srv = $('prod-type').value === 'service';
+  const on = 'flex-1 py-1.5 px-3 rounded-xl text-xs font-medium transition-all bg-gallery text-ink shadow-sm border border-hairline/50 flex items-center justify-center gap-1.5';
+  const off = 'flex-1 py-1.5 px-3 rounded-xl text-xs font-medium transition-all text-slate hover:text-ink flex items-center justify-center gap-1.5';
+  $('btn-type-account').className = srv ? off : on;
+  $('btn-type-service').className = srv ? on : off;
+  $('service-config-box')?.classList.toggle('hidden', !srv);
+  $('rent-config-box')?.classList.toggle('hidden', srv);
+  $('rent-fields')?.classList.toggle('hidden', !$('prod-rent-on')?.checked);
+  $('lbl-prod-stock').textContent = srv ? 'จำนวนที่รับงานได้ (หน่วย):' : 'จำนวนสต็อก (ชิ้น):';
+  $('hint-prod-stock').textContent = srv ? 'จำนวนงานที่รับได้ ระบบลดให้อัตโนมัติเมื่อมีออเดอร์' : 'ไอดีเกม: กดปุ่ม "สต็อก" ในตารางเพื่อเพิ่มไอดีจริง ระบบนับให้เอง (แก้ตรงนี้ไม่ได้)';
+  // ID products: the count comes from the real stock_items, so typing a number here would only make the shop lie.
+  $('prod-stock').readOnly = !srv;
+  $('prod-stock').classList.toggle('opacity-60', !srv);
+  // Koen value / equipment list / description only make sense for ID products; a service must not be forced to fill them.
+  ['prod-koen', 'prod-specs', 'prod-desc'].forEach(id => { $(id).required = !srv; });
+  if (srv) {
+    const cat = categoryOf(CATS, $('prod-category').value);
+    $('prod-service-unit').placeholder = cat?.unit || 'กอง';
+    $('prod-service-min').placeholder = `ใช้ค่าของหมวด (${cat?.minQty || 1})`;
+    updateServiceSummary();
+  }
+}
+function setKoenLabelPreset(label) { $('prod-koen-label').value = label; }
+function updateServiceSummary() {
+  const cat = categoryOf(CATS, $('prod-category').value);
+  const unit = $('prod-service-unit').value.trim() || cat?.unit || 'กอง';
+  const min = Math.floor(num($('prod-service-min').value)) || cat?.minQty || 1;
+  const pill = $('service-summary-pill');
+  if (pill) pill.innerText = `ราคา ${money($('prod-service-rate').value)}฿ / ${unit} (ขั้นต่ำ ${min} ${unit})`;
+}
+function syncServiceRateToPrice(v) { $('prod-price').value = v; updateServiceSummary(); }
+function setServiceUnitPreset(u) { $('prod-service-unit').value = u; updateServiceSummary(); }
+const SERVICE_TEMPLATES = { m61: ['กอง', 22, 15], koen_m: ['M', 25, 5], farm: ['รอบ', 150, 1] };
+function applyServiceTemplate(k) { const [u, r, m] = SERVICE_TEMPLATES[k] || []; if (!u) return; $('prod-service-unit').value = u; $('prod-service-rate').value = r; $('prod-service-min').value = m; syncServiceRateToPrice(r); }
 const PRESET_IMAGES = {
   m4a1: 'https://images.unsplash.com/photo-1595590424283-b8f1784cb2c8?auto=format&fit=crop&q=80&w=800',
   koen: 'https://images.unsplash.com/photo-1612287230202-1ff1d85d1bdf?auto=format&fit=crop&q=80&w=800',
@@ -146,1934 +289,804 @@ const PRESET_IMAGES = {
   wealth: 'https://images.unsplash.com/photo-1633158829585-23ba8f7c8caf?auto=format&fit=crop&q=80&w=800',
   smg: 'https://images.unsplash.com/photo-1574226516831-e1dff420e5c7?auto=format&fit=crop&q=80&w=800'
 };
+function setImagePreset(k) { if (PRESET_IMAGES[k]) { $('prod-image').value = PRESET_IMAGES[k]; updateImagePreview(PRESET_IMAGES[k]); } }
+function updateImagePreview(url) { const el = $('image-preview-element'); if (el) el.src = formatUrl(url) || 'https://placehold.co/800x500/f5f5f7/86868b?text=Preview'; }
 
-// Global App State
-let PRODUCTS = [...DEFAULT_PRODUCTS];
-let currentCategory = 'all';
-let searchQuery = '';
-let stockFilter = 'all';
-let sortOrder = 'default';
-let selectedProduct = null;
-let currentPaymentMethod = 'promptpay';
-let discountAmount = 0;
-let timerCountdown = 600;
-let timerInterval = null;
-let isPasswordRevealed = false;
-let toastTimeout = null;
-let currentDeliveredUsername = 'ArenaAgent9910';
-let currentDeliveredPassword = 'KamonaStrike#2026';
-let currentUser = null;
-let currentModalGallery = [];
-let currentGalleryIdx = 0;
-
-// Anti-Abuse Promo Rate Limits
-let promoFailedAttempts = 0;
-let promoLockoutExpiry = 0;
-
-// ==========================================
-// 2. TOAST NOTIFICATION UTILITY
-// ==========================================
-function triggerToast(message) {
-  const box = document.getElementById('toast-box');
-  const text = document.getElementById('toast-text');
-  if (!box || !text) return;
-
-  text.innerText = message;
-  box.classList.remove('opacity-0', '-translate-y-4', 'scale-95', 'pointer-events-none');
-  box.classList.add('opacity-100', 'translate-y-0', 'scale-100');
-
-  if (toastTimeout) clearTimeout(toastTimeout);
-  toastTimeout = setTimeout(() => {
-    box.classList.add('opacity-0', '-translate-y-4', 'scale-95', 'pointer-events-none');
-    box.classList.remove('opacity-100', 'translate-y-0', 'scale-100');
-  }, 3000);
-}
-window.showAdminToast = triggerToast;
-window.triggerToast = triggerToast;
-
-// ==========================================
-// 3. FIRESTORE SYNC & LISTENER
-// ==========================================
-function initFirebaseProductsListener() {
-  try {
-    const productsRef = collection(db, "products");
-    onSnapshot(productsRef, (snapshot) => {
-      if (!snapshot.empty) {
-        const firestoreList = [];
-        snapshot.forEach((docSnap) => {
-          const data = docSnap.data();
-          firestoreList.push({
-            id: docSnap.id,
-            name: data.name || 'ไม่มีชื่อสินค้า',
-            category: data.category || 'all',
-            price: Number(data.price) || 0,
-            koen: data.koen || '-',
-            stock: data.stock !== undefined ? Number(data.stock) : 0,
-            image: data.image || 'https://placehold.co/800x500/18181b/f59e0b?text=Tactical',
-            gallery: Array.isArray(data.gallery) && data.gallery.length > 0 ? data.gallery : [data.image],
-            tags: Array.isArray(data.tags) ? data.tags : [],
-            desc: data.desc || '',
-            specs: Array.isArray(data.specs) ? data.specs : []
-          });
-        });
-        PRODUCTS = firestoreList;
-      } else {
-        PRODUCTS = [...DEFAULT_PRODUCTS];
-      }
-
-      // ตรวจสอบและ Render ตามหน้าที่กำลังเปิด
-      if (document.getElementById('admin-products-table-body')) {
-        renderAdminProducts();
-        updateAdminMetrics();
-      }
-      if (document.getElementById('product-grid')) {
-        renderCategoryTabs();
-        renderProducts();
-        updateHeroMetrics();
-      }
-    }, (err) => {
-      console.warn("Firestore listener fallback to default:", err);
-      PRODUCTS = [...DEFAULT_PRODUCTS];
-      if (document.getElementById('admin-products-table-body')) {
-        renderAdminProducts();
-        updateAdminMetrics();
-      }
-      if (document.getElementById('product-grid')) {
-        renderCategoryTabs();
-        renderProducts();
-      }
-    });
-  } catch (e) {
-    PRODUCTS = [...DEFAULT_PRODUCTS];
-    if (document.getElementById('admin-products-table-body')) renderAdminProducts();
-    if (document.getElementById('product-grid')) renderProducts();
-  }
-}
-
-// ==========================================
-// 4. ADMIN DASHBOARD: PIN VAULT & SECURITY
-// ==========================================
-let currentSecurityDoc = null;
-let failedAttempts = 0;
-let lockoutTimer = null;
-
-async function hashPinWithSalt(pin, saltHex) {
-  const encoder = new TextEncoder();
-  const data = encoder.encode(pin + ":" + saltHex + ":TACTICAL_PIN_VAULT_2026");
-  const hashBuffer = await crypto.subtle.digest("SHA-256", data);
-  return Array.from(new Uint8Array(hashBuffer))
-    .map(b => b.toString(16).padStart(2, '0'))
-    .join('');
-}
-
-function generateRandomSalt() {
-  const saltBytes = new Uint8Array(16);
-  crypto.getRandomValues(saltBytes);
-  return Array.from(saltBytes).map(b => b.toString(16).padStart(2, '0')).join('');
-}
-
-async function checkSecurityPinState() {
-  const gate = document.getElementById('admin-auth-gate');
-  if (!gate) return; // ไม่ได้เปิดหน้า admin
-
-  const loadingState = document.getElementById('pin-state-loading');
-  const setupState = document.getElementById('pin-state-setup');
-  const unlockState = document.getElementById('pin-state-unlock');
-
-  if (sessionStorage.getItem('tactical_admin_pin_unlocked') === 'true') {
-    unlockDashboardUI();
-    return;
-  }
-
-  try {
-    let storedData = null;
-    const pinDoc = await getDoc(doc(db, 'system_settings', 'admin_pin'));
-    if (pinDoc.exists()) {
-      storedData = pinDoc.data();
-    } else {
-      const local = localStorage.getItem('tactical_admin_pin_vault');
-      if (local) storedData = JSON.parse(local);
-    }
-
-    if (loadingState) loadingState.classList.add('hidden');
-
-    if (!storedData || !storedData.pinHash || !storedData.salt) {
-      if (setupState) setupState.classList.remove('hidden');
-      if (unlockState) unlockState.classList.add('hidden');
-    } else {
-      currentSecurityDoc = storedData;
-      if (setupState) setupState.classList.add('hidden');
-      if (unlockState) unlockState.classList.remove('hidden');
-      initPinDigitBoxes();
-    }
-  } catch (err) {
-    console.warn('Security PIN check fallback:', err);
-    if (loadingState) loadingState.classList.add('hidden');
-    if (setupState) setupState.classList.remove('hidden');
-  }
-}
-
-async function handlePinSetupSubmit(event) {
-  event.preventDefault();
-  const p1 = document.getElementById('setup-pin-val').value.trim();
-  const p2 = document.getElementById('setup-pin-confirm').value.trim();
-
-  if (!/^\d{6}$/.test(p1)) {
-    triggerToast('รหัส PIN ต้องเป็นตัวเลข 6 หลักเท่านั้น');
-    return;
-  }
-  if (p1 !== p2) {
-    triggerToast('รหัส PIN ทั้ง 2 ช่องไม่ตรงกัน กรุณาตรวจสอบอีกครั้ง');
-    return;
-  }
-
-  try {
-    const salt = generateRandomSalt();
-    const pinHash = await hashPinWithSalt(p1, salt);
-    const payload = {
-      pinHash,
-      salt,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      setBy: 'atest'
-    };
-
-    try {
-      await setDoc(doc(db, 'system_settings', 'admin_pin'), payload);
-    } catch (e) {
-      console.warn('Firestore set PIN error, saved locally:', e);
-    }
-    localStorage.setItem('tactical_admin_pin_vault', JSON.stringify(payload));
-    
-    currentSecurityDoc = payload;
-    triggerToast('บันทึกรหัส PIN ลงฐานข้อมูลสำเร็จ');
-    sessionStorage.setItem('tactical_admin_pin_unlocked', 'true');
-    setTimeout(() => unlockDashboardUI(), 600);
-  } catch (err) {
-    triggerToast('เกิดข้อผิดพลาดในการบันทึก PIN: ' + err.message);
-  }
-}
-
-async function handlePinUnlockSubmit(event) {
-  if (event) event.preventDefault();
-  if (failedAttempts >= 5) {
-    triggerToast('ระบบถูกล็อกชั่วคราวเนื่องจากกรอกรหัสผิดเกินกำหนด');
-    return;
-  }
-
-  const digits = Array.from(document.querySelectorAll('.pin-digit-input')).map(i => i.value).join('');
-  if (digits.length !== 6) {
-    triggerToast('กรุณากรอกรหัส PIN ให้ครบ 6 หลัก');
-    return;
-  }
-
-  const inputHash = await hashPinWithSalt(digits, currentSecurityDoc.salt);
-  if (inputHash === currentSecurityDoc.pinHash) {
-    failedAttempts = 0;
-    sessionStorage.setItem('tactical_admin_pin_unlocked', 'true');
-    triggerToast('ปลดล็อกสิทธิ์ผู้ดูแลสำเร็จ');
-    unlockDashboardUI();
-  } else {
-    failedAttempts++;
-    document.getElementById('pin-error-msg')?.classList.remove('hidden');
-    document.querySelectorAll('.pin-digit-input').forEach(i => i.value = '');
-    document.querySelector('.pin-digit-input')?.focus();
-
-    if (failedAttempts >= 5) {
-      triggerPinLockout();
-    } else {
-      triggerToast(`รหัส PIN ไม่ถูกต้อง (เหลือโอกาส ${5 - failedAttempts} ครั้ง)`);
-    }
-  }
-}
-
-function triggerPinLockout() {
-  const lockMsg = document.getElementById('pin-lockout-msg');
-  const timerSpan = document.getElementById('pin-lockout-timer');
-  const btn = document.getElementById('btn-pin-submit');
-  if (lockMsg) lockMsg.classList.remove('hidden');
-  if (btn) btn.disabled = true;
-
-  let remaining = 60;
-  if (lockoutTimer) clearInterval(lockoutTimer);
-  lockoutTimer = setInterval(() => {
-    remaining--;
-    if (timerSpan) timerSpan.textContent = remaining;
-    if (remaining <= 0) {
-      clearInterval(lockoutTimer);
-      failedAttempts = 0;
-      if (lockMsg) lockMsg.classList.add('hidden');
-      if (btn) btn.disabled = false;
-    }
-  }, 1000);
-}
-
-function unlockDashboardUI() {
-  document.getElementById('admin-auth-gate')?.classList.add('hidden');
-  document.getElementById('admin-main-content')?.classList.remove('hidden');
-  renderAdminProducts();
-  renderAdminOrders();
-  renderAdminPromos();
-  loadAdminSettings();
-}
-
-function initPinDigitBoxes() {
-  const inputs = document.querySelectorAll('.pin-digit-input');
-  inputs.forEach((input, index) => {
-    input.addEventListener('input', (e) => {
-      if (e.target.value.length === 1 && index < inputs.length - 1) {
-        inputs[index + 1].focus();
-      }
-      if (Array.from(inputs).every(i => i.value.length === 1)) {
-        handlePinUnlockSubmit(null);
-      }
-    });
-    input.addEventListener('keydown', (e) => {
-      if (e.key === 'Backspace' && !e.target.value && index > 0) {
-        inputs[index - 1].focus();
-      }
-    });
-  });
-  inputs[0]?.focus();
-}
-
-function promptResetPin() {
-  if (confirm('คุณต้องการรีเซ็ตรหัส PIN เพื่อตั้งใหม่ใช่หรือไม่?')) {
-    sessionStorage.removeItem('tactical_admin_pin_unlocked');
-    localStorage.removeItem('tactical_admin_pin_vault');
-    location.reload();
-  }
-}
-
-function lockAdminSession() {
-  sessionStorage.removeItem('tactical_admin_pin_unlocked');
-  location.reload();
-}
-
-// ==========================================
-// 5. ADMIN: PRODUCT CRUD & TABLE (WITH STOCK BUTTON)
-// ==========================================
-function updateAdminMetrics() {
-  const total = PRODUCTS.length;
-  const inStock = PRODUCTS.filter(p => Number(p.stock) > 0).length;
-  const outOfStock = PRODUCTS.filter(p => Number(p.stock) === 0).length;
-  
-  const elTotal = document.getElementById('metric-total-products');
-  const elIn = document.getElementById('metric-instock-products');
-  const elOut = document.getElementById('metric-outofstock-products');
-  
-  if (elTotal) elTotal.innerText = total;
-  if (elIn) elIn.innerText = inStock;
-  if (elOut) elOut.innerText = outOfStock;
-}
-
-function renderAdminProducts(customList = null) {
-  const tbody = document.getElementById('admin-products-table-body');
-  const empty = document.getElementById('admin-products-empty');
-  if (!tbody) return;
-
-  const list = customList || PRODUCTS;
-  tbody.innerHTML = '';
-
-  if (list.length === 0) {
-    if (empty) empty.classList.remove('hidden');
-    return;
-  }
-  if (empty) empty.classList.add('hidden');
-
-  tbody.innerHTML = list.map(product => {
-    const isOutOfStock = Number(product.stock) === 0;
-
-    return `
-      <tr class="hover:bg-mist/70 transition-colors border-b border-hairline">
-        <td class="py-3 px-4">
-          <div class="w-14 h-10 rounded-lg overflow-hidden bg-mist border border-hairline shrink-0">
-            <img 
-              src="${product.image}" 
-              alt="${product.name}" 
-              class="w-full h-full object-cover"
-              onerror="this.onerror=null;this.src='https://placehold.co/100x70/f5f5f7/86868b?text=Tactical'"
-            />
-          </div>
-        </td>
-        <td class="py-3 px-4">
-          <div class="font-medium text-ink text-xs line-clamp-1">${product.name}</div>
-          <div class="text-[11px] text-slate line-clamp-1">${product.desc || '-'}</div>
-        </td>
-        <td class="py-3 px-4">
-          <span class="inline-block bg-mist border border-hairline px-2 py-0.5 rounded-full text-[10px] text-slate font-mono">
-            ${product.category}
-          </span>
-        </td>
-        <td class="py-3 px-4 font-mono font-semibold text-ink">
-          ฿${Number(product.price).toFixed(2)}
-        </td>
-        <td class="py-3 px-4 font-mono text-slate">
-          ${product.koen}
-        </td>
-        <td class="py-3 px-4">
-          ${!isOutOfStock 
-            ? `<span class="inline-flex items-center gap-1 text-emerald-600 font-semibold text-[11px] bg-emerald-50 px-2.5 py-0.5 rounded-full border border-emerald-200">
-                 <span class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
-                 ${product.stock} ชิ้น
-               </span>`
-            : `<span class="inline-block text-launchOrange font-semibold text-[11px] bg-orange-50 px-2.5 py-0.5 rounded-full border border-orange-200">
-                 หมด (0)
-               </span>`
-          }
-        </td>
-        <td class="py-3 px-4 text-right">
-          <div class="inline-flex items-center gap-1.5 justify-end">
-            <!-- ปุ่มสต็อก (Stock Replenishment Button) -->
-            <button 
-              onclick="openStockModal('${product.id}')" 
-              title="เติมสต็อกไอดีชุดใหญ่" 
-              class="apple-pricing-pill px-3 py-1 text-[11px] font-medium flex items-center gap-1.5 shadow-sm">
-              <span>📦 สต็อก</span>
-              <span class="bg-white/20 px-1.5 py-0.2 rounded-full text-[10px] font-mono">${product.stock}</span>
-            </button>
-            
-            <!-- ปุ่มแก้ไข -->
-            <button 
-              onclick="openProductModal('${product.id}')" 
-              title="แก้ไขรายละเอียด" 
-              class="apple-explore-pill px-2.5 py-1 text-[11px] text-slate hover:text-ink">
-              แก้ไข
-            </button>
-            
-            <!-- ปุ่มลบ -->
-            <button 
-              onclick="deleteAdminProduct('${product.id}')" 
-              title="ลบสินค้านี้" 
-              class="apple-explore-pill px-2.5 py-1 text-[11px] text-red-500 border-red-200 hover:bg-red-50">
-              ลบ
-            </button>
-          </div>
-        </td>
-      </tr>
-    `;
+function fillProductCategorySelect() {
+  const sel = $('prod-category'); if (!sel) return;
+  const keep = sel.value;
+  sel.innerHTML = '<option value="">— ไม่มีหมวดหมู่ —</option>' + ['account', 'service'].map(kind => {
+    const opts = CATS.filter(c => c.kind === kind).map(c => `<option value="${adminEsc(c.id)}">${adminEsc(c.name)}</option>`).join('');
+    return opts ? `<optgroup label="${adminEsc(KIND_LABEL[kind])}">${opts}</optgroup>` : '';
   }).join('');
-}
-
-function filterAdminProducts(queryText) {
-  const q = (queryText || '').toLowerCase();
-  const filtered = PRODUCTS.filter(p => 
-    p.name.toLowerCase().includes(q) ||
-    p.category.toLowerCase().includes(q) ||
-    p.tags.some(t => t.toLowerCase().includes(q))
-  );
-  renderAdminProducts(filtered);
+  sel.value = [...sel.options].some(o => o.value === keep) ? keep : '';
 }
 
 function openProductModal(productId = null) {
-  const modal = document.getElementById('product-form-modal');
-  const heading = document.getElementById('product-modal-heading');
-  const idInput = document.getElementById('prod-edit-id');
-  if (!modal) return;
-
-  if (productId) {
-    const p = PRODUCTS.find(it => it.id === productId);
-    if (!p) return;
-    if (heading) heading.innerText = 'แก้ไขสินค้า: ' + p.name;
-    if (idInput) idInput.value = p.id;
-    document.getElementById('prod-name').value = p.name;
-    document.getElementById('prod-category').value = p.category;
-    document.getElementById('prod-koen').value = p.koen;
-    document.getElementById('prod-price').value = p.price;
-    document.getElementById('prod-stock').value = p.stock;
-    document.getElementById('prod-image').value = p.image;
-    document.getElementById('prod-gallery').value = (p.gallery || []).join('\n');
-    document.getElementById('prod-tags').value = (p.tags || []).join(', ');
-    document.getElementById('prod-desc').value = p.desc;
-    document.getElementById('prod-specs').value = (p.specs || []).join('\n');
-    updateImagePreview(p.image);
+  fillProductCategorySelect();
+  const p = productId ? PRODUCTS.find(x => x.id === productId) : null;
+  $('product-crud-form').reset();
+  $('product-modal-heading').innerText = p ? 'แก้ไขสินค้า: ' + p.name : 'เพิ่มสินค้าใหม่';
+  $('prod-edit-id').value = p?.id || '';
+  if (p) {
+    const set = (id, v) => { $(id).value = v ?? ''; };
+    set('prod-name', p.name); set('prod-koen', p.koen); set('prod-koen-label', p.koenLabel); set('prod-price', p.price); set('prod-stock', p.stock ?? 0);
+    set('prod-image', p.image); set('prod-gallery', (p.gallery || []).join('\n')); set('prod-tags', (p.tags || []).join(', '));
+    set('prod-desc', p.desc); set('prod-specs', (p.specs || []).join('\n'));
+    const fm = Object.fromEntries((p.farmModes || []).map(m => [m.key, m.price]));
+    set('prod-farm-id', fm.with_id); set('prod-farm-self', fm.self);
+    set('prod-packages', (p.packages || []).map(k => `${k.qty} ${k.bonus || 0}`).join('\n'));
+    set('prod-hours', p.serviceHours); set('prod-hours-open', p.hoursOpen); set('prod-hours-close', p.hoursClose);
+    set('prod-info', p.infoLines); set('prod-howto', p.howTo); set('prod-warranty', p.warrantyText);
+    set('prod-service-unit', p.serviceUnit); set('prod-service-min', p.serviceMin); set('prod-service-rate', p.serviceRate || p.price);
+    $('prod-category').value = categoryOf(CATS, p.category) ? p.category : '';
+    $('prod-featured').checked = p.featured === true;
+    $('prod-rent-on').checked = num(p.rentHourPrice) > 0 || (p.rentPackages || []).length > 0;
+    set('prod-rent-rate', p.rentHourPrice); set('prod-rent-min', p.rentMinHours); set('prod-rent-deposit', p.rentDeposit);
+    set('prod-rent-packages', (p.rentPackages || []).map(k => `${k.hours} ${k.price}`).join('\n'));
+    $('prod-type').value = isServiceProduct(p, CATS) ? 'service' : 'account';
   } else {
-    if (heading) heading.innerText = 'เพิ่มสินค้าใหม่';
-    if (idInput) idInput.value = '';
-    document.getElementById('product-crud-form').reset();
-    updateImagePreview('');
+    $('prod-stock').value = 0;
+    $('prod-featured').checked = false;
+    $('prod-rent-on').checked = false;
+    $('prod-type').value = categoryOf(CATS, $('prod-category').value)?.kind === 'service' ? 'service' : 'account';
   }
-
-  modal.classList.remove('hidden');
-  modal.classList.add('flex');
+  updateImagePreview(p?.image || '');
+  applyTypeUi();
+  $('product-form-modal').classList.remove('hidden'); $('product-form-modal').classList.add('flex');
 }
+function closeProductModal() { $('product-form-modal').classList.add('hidden'); $('product-form-modal').classList.remove('flex'); }
 
-function closeProductModal() {
-  const modal = document.getElementById('product-form-modal');
-  if (modal) {
-    modal.classList.add('hidden');
-    modal.classList.remove('flex');
-  }
-}
-
-async function handleProductFormSubmit(event) {
-  event.preventDefault();
-  const idInput = document.getElementById('prod-edit-id').value.trim();
-  const name = document.getElementById('prod-name').value.trim();
-  const category = document.getElementById('prod-category').value;
-  const koen = document.getElementById('prod-koen').value.trim();
-  const price = parseFloat(document.getElementById('prod-price').value) || 0;
-  const stock = parseInt(document.getElementById('prod-stock').value, 10) || 0;
-  const image = document.getElementById('prod-image').value.trim();
-  const galleryText = document.getElementById('prod-gallery').value.trim();
-  const gallery = galleryText ? galleryText.split('\n').map(s => s.trim()).filter(Boolean) : [image];
-  const tagsText = document.getElementById('prod-tags').value.trim();
-  const tags = tagsText ? tagsText.split(',').map(s => s.trim()).filter(Boolean) : [];
-  const desc = document.getElementById('prod-desc').value.trim();
-  const specsText = document.getElementById('prod-specs').value.trim();
-  const specs = specsText ? specsText.split('\n').map(s => s.trim()).filter(Boolean) : [];
-
-  const prodId = idInput || 'prod_' + Date.now();
+async function handleProductFormSubmit(e) {
+  e.preventDefault();
+  const editId = $('prod-edit-id').value.trim();
+  const category = $('prod-category').value;
+  const isSrv = $('prod-type').value === 'service';
+  const rentOn = !isSrv && $('prod-rent-on').checked;
+  const rentRate = rentOn ? num($('prod-rent-rate').value) : 0;
+  const rentPackages = rentOn ? $('prod-rent-packages').value.split('\n').map(l => l.trim().split(/[\s,]+/).map(Number)).filter(r => r[0] >= 1 && r[1] > 0).map(r => ({ hours: Math.floor(r[0]), price: r[1] })) : [];
+  if (rentOn && !(rentRate > 0) && !rentPackages.length) return triggerToast('ใส่ราคา/ชั่วโมง หรือแพ็กเกจเช่าอย่างน้อย 1 อย่าง', 'error');
+  const price = rentOn ? (rentRate || Math.min(...rentPackages.map(k => k.price))) : (num($(isSrv ? 'prod-service-rate' : 'prod-price').value) || num($('prod-price').value));
+  const image = formatUrl($('prod-image').value);
+  const galleryText = $('prod-gallery').value.trim();
+  const packages = $('prod-packages').value.split('\n').map(l => l.trim().split(/[\s,]+/).map(Number)).filter(r => r[0] >= 1).map(r => ({ qty: Math.floor(r[0]), bonus: Math.max(0, Math.floor(r[1]) || 0) }));
+  const opt = (id) => $(id).value.trim() || deleteField();
+  const fId = num($('prod-farm-id').value), fSelf = num($('prod-farm-self').value);
+  const farmModes = isSrv && fId > 0 && fSelf > 0 ? [{ key: 'with_id', label: 'ให้ไอดีไปยืน', price: fId }, { key: 'self', label: 'ไปยืนเอง', price: fSelf }] : null;
+  if (!(price > 0) && !farmModes) return triggerToast('กรุณาใส่ราคา', 'error');
+  const id = editId || 'prod_' + Date.now().toString(36);
   const payload = {
-    id: prodId,
-    name,
-    category,
-    koen,
-    price,
-    stock,
-    image,
-    gallery,
-    tags,
-    desc,
-    specs,
-    updatedAt: serverTimestamp()
+    id, name: $('prod-name').value.trim(), category: category || deleteField(), koen: $('prod-koen').value.trim(), koenLabel: opt('prod-koen-label'),
+    price: farmModes ? Math.min(fId, fSelf) : price, image,
+    // service: free number (capacity). ID product: never typed, counted from stock_items (new = 0, edit = untouched)
+    ...(isSrv ? { stock: Math.max(0, parseInt($('prod-stock').value, 10) || 0) } : editId ? {} : { stock: 0 }),
+    gallery: galleryText ? galleryText.split('\n').map(s => formatUrl(s)).filter(Boolean) : (image ? [image] : []),
+    tags: $('prod-tags').value.split(',').map(s => s.trim()).filter(Boolean), desc: $('prod-desc').value.trim(),
+    specs: $('prod-specs').value.split('\n').map(s => s.trim()).filter(Boolean),
+    productType: isSrv ? 'service' : 'account', featured: $('prod-featured').checked,
+    serviceUnit: isSrv && $('prod-service-unit').value.trim() ? $('prod-service-unit').value.trim() : deleteField(),
+    serviceMin: isSrv && Math.floor(num($('prod-service-min').value)) > 0 ? Math.floor(num($('prod-service-min').value)) : deleteField(),
+    serviceRate: deleteField(),
+    rentHourPrice: rentRate > 0 ? rentRate : deleteField(),
+    rentMinHours: rentOn && Math.floor(num($('prod-rent-min').value)) > 1 ? Math.floor(num($('prod-rent-min').value)) : deleteField(),
+    rentDeposit: rentOn && num($('prod-rent-deposit').value) > 0 ? num($('prod-rent-deposit').value) : deleteField(),
+    rentPackages: rentPackages.length ? rentPackages : deleteField(),
+    packages: packages.length ? packages : deleteField(), farmModes: farmModes || deleteField(),
+    serviceHours: opt('prod-hours'), hoursOpen: opt('prod-hours-open'), hoursClose: opt('prod-hours-close'),
+    infoLines: opt('prod-info'), howTo: opt('prod-howto'), warrantyText: opt('prod-warranty'),
+    updatedAt: serverTimestamp(), ...(editId ? {} : { createdAt: serverTimestamp() })
   };
-
-  try {
-    await setDoc(doc(db, "products", prodId), payload, { merge: true });
-    triggerToast('บันทึกข้อมูลสินค้าลง Firebase สำเร็จ!');
-    closeProductModal();
-  } catch (err) {
-    console.warn("Save product error (local fallback):", err);
-    const idx = PRODUCTS.findIndex(p => p.id === prodId);
-    if (idx >= 0) PRODUCTS[idx] = payload;
-    else PRODUCTS.push(payload);
-    renderAdminProducts();
-    updateAdminMetrics();
-    closeProductModal();
-    triggerToast('บันทึกสินค้าในระบบเรียบร้อย (Local)');
-  }
+  try { await setDoc(doc(db, 'products', id), payload, { merge: true }); triggerToast('บันทึกสินค้าแล้ว', 'success'); closeProductModal(); }
+  catch (err) { console.warn(err); triggerToast('บันทึกสินค้าไม่สำเร็จ', 'error'); }
 }
-
-async function deleteAdminProduct(productId) {
-  if (!confirm('คุณต้องการลบสินค้านี้ออกจากระบบใช่หรือไม่?')) return;
-  try {
-    await deleteDoc(doc(db, "products", productId));
-    triggerToast('ลบสินค้าสำเร็จเรียบร้อย');
-  } catch (err) {
-    console.warn("Delete product error:", err);
-    PRODUCTS = PRODUCTS.filter(p => p.id !== productId);
-    renderAdminProducts();
-    updateAdminMetrics();
-    triggerToast('ลบสินค้าในระบบเรียบร้อย (Local)');
-  }
+async function deleteAdminProduct(id) {
+  if (!confirm('ลบสินค้านี้? (ไอดีที่ยังไม่ขายในสต็อกจะเข้าถึงไม่ได้)')) return;
+  try { await deleteDoc(doc(db, 'products', id)); triggerToast('ลบสินค้าแล้ว', 'success'); } catch (e) { triggerToast('ลบไม่สำเร็จ', 'error'); }
 }
+function openStockModalQuick() { const p = PRODUCTS.find(x => !isServiceProduct(x, CATS)); p ? openStockModal(p.id) : triggerToast('ยังไม่มีสินค้าประเภทไอดีเกม', 'error'); }
 
-async function seedInitialProducts() {
-  if (!confirm('ต้องการคืนค่าสินค้าเริ่มต้น 6 รายการลงฐานข้อมูลใช่หรือไม่?')) return;
-  triggerToast('กำลังคืนค่าสินค้าเริ่มต้น...');
-  try {
-    for (const p of DEFAULT_PRODUCTS) {
-      await setDoc(doc(db, "products", p.id), p);
-    }
-    triggerToast('คืนค่า 6 สินค้าเริ่มต้นสำเร็จ!');
-  } catch (err) {
-    console.warn("Seed fallback error:", err);
-    PRODUCTS = [...DEFAULT_PRODUCTS];
-    renderAdminProducts();
-    updateAdminMetrics();
-    triggerToast('คืนค่าข้อมูลในระบบ Local เรียบร้อย');
-  }
-}
-
-function setImagePreset(presetKey) {
-  const url = PRESET_IMAGES[presetKey];
-  if (url) {
-    const input = document.getElementById('prod-image');
-    if (input) input.value = url;
-    updateImagePreview(url);
-  }
-}
-
-function updateImagePreview(url) {
-  const el = document.getElementById('image-preview-element');
-  if (el) el.src = url || 'https://placehold.co/800x500/f5f5f7/86868b?text=Image+Preview';
-}
-
-function openStockModalQuick() {
-  if (PRODUCTS && PRODUCTS.length > 0) {
-    openStockModal(PRODUCTS[0].id);
-  } else {
-    triggerToast('กรุณาเพิ่มสินค้าหรือคืนค่าเริ่มต้นก่อนจัดการสต็อก');
-  }
-}
-
-// ==========================================
-// 6. ADMIN: BULK STOCK REPLENISHMENT ENGINE
-// ==========================================
-let currentStockProductId = null;
-let parsedStockItems = [];
-
+// ---- bulk stock ----
+let currentStockProductId = null, parsedStockItems = [];
 function parseStockLines(text) {
-  const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
-  const items = [];
-  const seen = new Set();
-  let hasDuplicates = false;
-
-  lines.forEach((line) => {
-    let username = '';
-    let password = '';
-
-    const emailPassMatch = line.match(/^(?:email|user|username)\s+([^\s]+)\s+(?:password|pass|pwd)\s+(.+)$/i);
-    const colonPipeMatch = line.match(/^([^:\s|]+)\s*[:|]\s*(.+)$/);
-    const spaceMatch = line.match(/^([^\s]+)\s+([^\s]+)$/);
-
-    if (emailPassMatch) {
-      username = emailPassMatch[1].trim();
-      password = emailPassMatch[2].trim();
-    } else if (colonPipeMatch) {
-      username = colonPipeMatch[1].trim();
-      password = colonPipeMatch[2].trim();
-    } else if (spaceMatch) {
-      username = spaceMatch[1].trim();
-      password = spaceMatch[2].trim();
-    }
-
-    if (username && password) {
-      const key = username.toLowerCase();
-      if (seen.has(key)) {
-        hasDuplicates = true;
-      } else {
-        seen.add(key);
-        items.push({ username, password, status: 'available' });
-      }
-    }
+  const items = [], seen = new Set(); let dup = false;
+  text.split('\n').map(l => l.trim()).filter(Boolean).forEach(line => {
+    const m = line.match(/^(?:email|user|username)\s+(\S+)\s+(?:password|pass|pwd)\s+(.+)$/i) || line.match(/^([^:\s|]+)\s*[:|]\s*(.+)$/) || line.match(/^(\S+)\s+(\S+)$/);
+    if (!m) return;
+    const [u, p] = [m[1].trim(), m[2].trim()];
+    if (seen.has(u.toLowerCase())) { dup = true; return; }
+    seen.add(u.toLowerCase()); items.push({ username: u, password: p });
   });
-
-  return { items, hasDuplicates };
+  return { items, hasDuplicates: dup };
 }
-
 function handleStockTextareaInput(val) {
   const { items, hasDuplicates } = parseStockLines(val);
   parsedStockItems = items;
-
-  const counter = document.getElementById('stock-parsed-counter');
-  const dupWarning = document.getElementById('stock-duplicate-warning');
-  const btnLabel = document.getElementById('btn-add-stock-label');
-
-  if (counter) counter.textContent = `ตรวจพบ: ${items.length} รายการพร้อมนำเข้า`;
-  if (btnLabel) btnLabel.textContent = `บันทึกและนำเข้าสต็อก (${items.length} ชิ้น)`;
-  if (dupWarning) {
-    if (hasDuplicates) dupWarning.classList.remove('hidden');
-    else dupWarning.classList.add('hidden');
-  }
+  $('stock-parsed-counter').textContent = `ตรวจพบ: ${items.length} รายการพร้อมนำเข้า`;
+  $('btn-add-stock-label').textContent = `บันทึกและนำเข้าสต็อก (${items.length} ชิ้น)`;
+  $('stock-duplicate-warning').classList.toggle('hidden', !hasDuplicates);
 }
-
-async function openStockModal(productId) {
-  currentStockProductId = productId;
-  parsedStockItems = [];
-
-  const modal = document.getElementById('stock-management-modal');
-  const textarea = document.getElementById('bulk-stock-textarea');
-  if (textarea) textarea.value = '';
-  handleStockTextareaInput('');
-
-  const prod = PRODUCTS.find(p => p.id === productId);
-  const prodTitle = prod ? prod.name : 'สินค้า #' + productId;
-  const curStock = prod ? prod.stock : 0;
-
-  document.getElementById('stock-modal-prod-title').textContent = prodTitle;
-  document.getElementById('stock-modal-current-count').textContent = curStock;
-
-  modal.classList.remove('hidden');
-  modal.classList.add('flex');
-
-  loadAvailableStockItems(productId);
+function openStockModal(id) {
+  currentStockProductId = id;
+  $('bulk-stock-textarea').value = ''; handleStockTextareaInput('');
+  const p = PRODUCTS.find(x => x.id === id);
+  $('stock-modal-prod-title').textContent = p?.name || id;
+  $('stock-modal-current-count').textContent = num(p?.stock);
+  $('stock-management-modal').classList.remove('hidden'); $('stock-management-modal').classList.add('flex');
+  loadAvailableStockItems(id);
 }
-
-function closeStockModal() {
-  const modal = document.getElementById('stock-management-modal');
-  if (modal) {
-    modal.classList.add('hidden');
-    modal.classList.remove('flex');
-  }
-  currentStockProductId = null;
-}
-
+function closeStockModal() { $('stock-management-modal').classList.add('hidden'); $('stock-management-modal').classList.remove('flex'); currentStockProductId = null; }
 async function submitBulkStockImport() {
-  if (!currentStockProductId) {
-    triggerToast('ไม่พบข้อมูลสินค้าระหว่างทำรายการ');
-    return;
-  }
-  if (parsedStockItems.length === 0) {
-    triggerToast('กรุณาวางรายการไอดีอย่างน้อย 1 บรรทัด (เช่น email ... password ...)');
-    return;
-  }
-
-  const btn = document.getElementById('btn-confirm-add-stock');
-  if (btn) btn.disabled = true;
-
+  if (!currentStockProductId || !parsedStockItems.length) return triggerToast('กรุณาวางรายการไอดีอย่างน้อย 1 บรรทัด', 'error');
+  const btn = $('btn-confirm-add-stock'); btn.disabled = true;
   try {
-    const batch = writeBatch(db);
     const prodRef = doc(db, 'products', currentStockProductId);
-
-    parsedStockItems.forEach(item => {
-      const itemRef = doc(collection(prodRef, 'stock_items'));
-      batch.set(itemRef, {
-        username: item.username,
-        password: item.password,
-        status: 'available',
-        addedAt: serverTimestamp(),
-        addedBy: 'atest'
-      });
-    });
-
-    batch.update(prodRef, {
-      stock: increment(parsedStockItems.length)
-    });
-
-    await batch.commit();
-
-    triggerToast(`นำเข้าไอดีสำเร็จเรียบร้อย (${parsedStockItems.length} ชิ้น)`);
-    document.getElementById('bulk-stock-textarea').value = '';
-    handleStockTextareaInput('');
-    
+    for (let i = 0; i < parsedStockItems.length; i += 400) {
+      const chunk = parsedStockItems.slice(i, i + 400);
+      const batch = writeBatch(db);
+      chunk.forEach(it => batch.set(doc(collection(prodRef, 'stock_items')), { username: it.username, password: it.password, status: 'available', addedAt: serverTimestamp(), addedBy: me?.uid || '' }));
+      batch.update(prodRef, { stock: increment(chunk.length) });
+      await batch.commit();
+    }
+    triggerToast(`นำเข้าไอดี ${parsedStockItems.length} รายการแล้ว`, 'success');
+    $('bulk-stock-textarea').value = ''; handleStockTextareaInput('');
     loadAvailableStockItems(currentStockProductId);
-  } catch (err) {
-    console.warn('Stock import fallback (local):', err);
-    const key = 'tactical_stock_' + currentStockProductId;
-    const existing = JSON.parse(localStorage.getItem(key) || '[]');
-    const updated = [...existing, ...parsedStockItems.map((it, idx) => ({
-      id: 'local_' + Date.now() + '_' + idx,
-      username: it.username,
-      password: it.password,
-      status: 'available',
-      addedAt: new Date().toISOString()
-    }))];
-    localStorage.setItem(key, JSON.stringify(updated));
-
-    // Update local product stock
-    const p = PRODUCTS.find(it => it.id === currentStockProductId);
-    if (p) p.stock = (p.stock || 0) + parsedStockItems.length;
-
-    renderAdminProducts();
-    updateAdminMetrics();
-    loadAvailableStockItems(currentStockProductId);
-    triggerToast(`นำเข้าไอดีสำเร็จ (${parsedStockItems.length} ชิ้น - โหมด Local)`);
-  } finally {
-    if (btn) btn.disabled = false;
-  }
+  } catch (e) { console.warn(e); triggerToast('นำเข้าไม่สำเร็จ', 'error'); }
+  finally { btn.disabled = false; }
 }
-
-async function loadAvailableStockItems(productId) {
-  const tbody = document.getElementById('stock-items-list-body');
-  const emptyMsg = document.getElementById('stock-items-empty');
-  const countBadge = document.getElementById('stock-available-count');
-  if (!tbody) return;
-
-  tbody.innerHTML = '';
+async function loadAvailableStockItems(id) {
+  const tbody = $('stock-items-list-body'); tbody.innerHTML = '';
   let items = [];
-
-  try {
-    const stockCol = collection(db, 'products', productId, 'stock_items');
-    const q = query(stockCol, where('status', '==', 'available'));
-    const snap = await getDocs(q);
-    snap.forEach(docSnap => {
-      items.push({ id: docSnap.id, ...docSnap.data() });
-    });
-  } catch (e) {
-    const key = 'tactical_stock_' + productId;
-    items = JSON.parse(localStorage.getItem(key) || '[]').filter(i => i.status === 'available');
+  try { items = (await getDocs(query(collection(db, 'products', id, 'stock_items'), where('status', '==', 'available')))).docs.map(d => ({ id: d.id, ...d.data() })); } catch (e) { console.warn(e); }
+  $('stock-available-count').textContent = items.length;
+  $('stock-modal-current-count').textContent = items.length;
+  $('stock-items-empty').classList.toggle('hidden', items.length > 0);
+  const p = PRODUCTS.find(x => x.id === id);
+  if (p && num(p.stock) !== items.length && !isServiceProduct(p, CATS)) {
+    triggerToast(`สต็อกที่แสดง (${num(p.stock)}) ไม่ตรงกับไอดีจริง (${items.length}) · ปรับให้ตรงแล้ว`);
+    updateDoc(doc(db, 'products', id), { stock: items.length }).catch(() => {});
   }
-
-  if (countBadge) countBadge.textContent = items.length;
-  const modalCount = document.getElementById('stock-modal-current-count');
-  if (modalCount) modalCount.textContent = items.length;
-
-  if (items.length === 0) {
-    if (emptyMsg) emptyMsg.classList.remove('hidden');
-    return;
-  }
-
-  if (emptyMsg) emptyMsg.classList.add('hidden');
-  tbody.innerHTML = items.map((it, idx) => `
-    <tr class="hover:bg-gallery/80 transition-colors">
-      <td class="py-2.5 px-3 text-slate w-8">${idx + 1}.</td>
-      <td class="py-2.5 px-3 font-semibold text-ink select-all">${it.username}</td>
-      <td class="py-2.5 px-3 text-slate select-all">••••••••</td>
-      <td class="py-2.5 px-3 text-right">
-        <button onclick="deleteSingleStockItem('${productId}', '${it.id}')" class="text-red-500 hover:text-red-700 text-[11px] font-medium hover:underline">
-          ลบออก
-        </button>
-      </td>
-    </tr>
-  `).join('');
+  tbody.innerHTML = items.map((it, i) => `<tr><td class="py-2.5 px-3 text-slate w-8">${i + 1}.</td><td class="py-2.5 px-3 font-semibold select-all">${adminEsc(it.username)}</td><td class="py-2.5 px-3 text-slate">••••••••</td>
+    <td class="py-2.5 px-3 text-right"><button onclick='deleteSingleStockItem(${adminEsc(JSON.stringify(id))}, ${adminEsc(JSON.stringify(it.id))})' class="text-red-500 text-[11px] hover:underline">ลบออก</button></td></tr>`).join('');
 }
-
-async function deleteSingleStockItem(productId, itemId) {
-  if (!confirm('คุณต้องการนำไอดีนี้ออกจากคลังสต็อกใช่หรือไม่?')) return;
-
+async function deleteSingleStockItem(pid, itemId) {
+  if (!confirm('นำไอดีนี้ออกจากคลัง?')) return;
   try {
-    const batch = writeBatch(db);
-    const itemRef = doc(db, 'products', productId, 'stock_items', itemId);
-    const prodRef = doc(db, 'products', productId);
-
-    batch.delete(itemRef);
-    batch.update(prodRef, {
-      stock: increment(-1)
-    });
-    await batch.commit();
-
-    triggerToast('ลบไอดีออกจากคลังเรียบร้อย');
-    loadAvailableStockItems(productId);
-  } catch (err) {
-    const key = 'tactical_stock_' + productId;
-    const items = JSON.parse(localStorage.getItem(key) || '[]');
-    const filtered = items.filter(i => i.id !== itemId);
-    localStorage.setItem(key, JSON.stringify(filtered));
-
-    const p = PRODUCTS.find(it => it.id === productId);
-    if (p && p.stock > 0) p.stock -= 1;
-
-    renderAdminProducts();
-    updateAdminMetrics();
-    loadAvailableStockItems(productId);
-    triggerToast('ลบไอดีเรียบร้อย');
-  }
+    const b = writeBatch(db);
+    b.delete(doc(db, 'products', pid, 'stock_items', itemId));
+    b.update(doc(db, 'products', pid), { stock: increment(-1) });
+    await b.commit();
+    triggerToast('ลบไอดีออกจากคลังแล้ว', 'success');
+    loadAvailableStockItems(pid);
+  } catch (e) { triggerToast('ลบไม่สำเร็จ', 'error'); }
 }
 
 // ==========================================
-// 7. ADMIN: ORDERS & PROMOS & SETTINGS
+// DASHBOARD (สรุปภาพรวม): computed in the browser from the lists already loaded
 // ==========================================
-const adminEsc = (v) => String(v ?? '')
-  .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-  .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
-const tsToDate = (v) => (v?.toDate ? v.toDate() : (v ? new Date(v) : null));
+const PAID = (o) => (o.status === 'completed' || o.status === 'processing') && o.paymentMethod !== 'prize'; // a service order is paid once it is processing; loot-box prizes are free
+function renderDashboard() {
+  if (!ADMIN) return;
+  const cards = $('dash-cards'); if (!cards) return;
+  const day0 = new Date().setHours(0, 0, 0, 0), D = 864e5;
+  // shortcut: rental income is counted on the day the rental started (extensions included), fine for a summary
+  const sales = [...ORDERS.filter(PAID).map(o => ({ t: tsMs(o.createdAt), v: num(o.amount), name: o.productName })), ...RENTALS.map(r => ({ t: tsMs(r.createdAt), v: num(r.price), name: r.productName })),
+    ...(window.getBoxOpens?.() || []).map(b => ({ t: tsMs(b.createdAt), v: num(b.price), name: `กล่องสุ่ม ${b.boxName || ''}` }))]; // box opens: the credit paid for them
+  const sum = (rows, from) => rows.filter(x => x.t >= from).reduce((a, x) => a + x.v, 0);
+  const topups = TOPUPS.filter(t => t.status === 'completed').map(t => ({ t: tsMs(t.completedAt) || tsMs(t.createdAt), v: num(t.amount) }));
+  const card = (label, value, sub = '') => `<div class="apple-card p-4"><p class="text-[11px] text-slate">${label}</p><p class="text-2xl font-heading font-semibold mt-1">${value}</p><p class="text-[11px] text-slate mt-0.5">${sub}</p></div>`;
+  const ordersToday = ORDERS.filter(o => tsMs(o.createdAt) >= day0 && PAID(o)).length; // same rule as the sales figure: paid orders only
+  const newUsers = (from) => USERS.filter(u => tsMs(u.createdAt) >= from).length;
+  const credit = USERS.reduce((a, u) => a + num(u.walletBalance), 0);
+  cards.innerHTML = [
+    card('ยอดขายวันนี้', '฿' + money(sum(sales, day0)), `${ordersToday} ออเดอร์`),
+    card('ยอดขาย 7 วัน', '฿' + money(sum(sales, day0 - 6 * D)), `เฉลี่ย ฿${money(sum(sales, day0 - 6 * D) / 7)}/วัน`),
+    card('ยอดขาย 30 วัน', '฿' + money(sum(sales, day0 - 29 * D)), `ทั้งหมด ฿${money(sum(sales, 0))}`),
+    card('เงินเติมเข้า 30 วัน', '฿' + money(sum(topups, day0 - 29 * D)), `วันนี้ ฿${money(sum(topups, day0))}`),
+    card('ผู้ใช้ใหม่', newUsers(day0), `7 วัน ${newUsers(day0 - 6 * D)} · ทั้งหมด ${USERS.length}`),
+    card('เครดิตค้างในระบบ', '฿' + money(credit), 'ยอดรวมของทุกบัญชี'),
+    card('กำลังเช่า', RENTALS.filter(r => r.status === 'active' && num(r.endMs) > Date.now()).length, `รอตรวจ ${RENTALS.filter(r => r.status === 'returned' || r.status === 'expired').length}`),
+    card('คิวบริการที่ค้าง', ORDERS.filter(o => o.productType === 'service' && o.status === 'processing').length, 'กำลังดำเนินการ / รอคิว')
+  ].join('');
+  // 14-day bars
+  const days = Array.from({ length: 14 }, (_, k) => day0 - (13 - k) * D);
+  const vals = days.map(d => sum(sales.filter(x => x.t < d + D), d));
+  const max = Math.max(...vals, 1);
+  $('dash-chart').innerHTML = days.map((d, k) => `<div class="flex-1 flex flex-col items-center justify-end h-full min-w-0" title="${new Date(d).toLocaleDateString('th-TH')} ฿${money(vals[k])}"><div class="w-full rounded-t-md ${k === 13 ? 'bg-pricingBlue' : 'bg-control'}" style="height:${Math.max(vals[k] ? 4 : 1, vals[k] / max * 100)}%"></div><span class="text-[9px] text-slate mt-1">${new Date(d).getDate()}</span></div>`).join('');
+  // top products (30 days)
+  const by = {};
+  sales.filter(x => x.t >= day0 - 29 * D).forEach(x => { const k = String(x.name || '').replace(/\s*\(.*\)$/, ''); by[k] = by[k] || { n: 0, v: 0 }; by[k].n++; by[k].v += x.v; });
+  const top = Object.entries(by).sort((a, b) => b[1].v - a[1].v).slice(0, 5);
+  $('dash-top').innerHTML = top.length ? top.map(([n, x], k) => `<div class="flex justify-between gap-3"><span class="truncate">${k + 1}. ${adminEsc(n)}</span><span class="shrink-0 text-slate">${x.n} รายการ · <b class="text-ink">฿${money(x.v)}</b></span></div>`).join('') : '<p class="text-slate">ยังไม่มีข้อมูล</p>';
+  // to-do
+  const low = PRODUCTS.filter(p => !isServiceProduct(p, CATS) && num(p.stock) <= 3).sort((a, b) => num(a.stock) - num(b.stock));
+  const todo = [
+    [ORDERS.filter(o => o.status === 'pending_payment').length, 'ออเดอร์รอตรวจการชำระเงิน', 'orders'],
+    [TOPUPS.filter(t => t.status === 'pending').length, 'รายการเติมเงินรอตรวจ', 'topups'],
+    [RENTALS.filter(r => r.status === 'returned' || r.status === 'expired').length, 'การเช่ารอตรวจ (เปลี่ยนรหัส/คืนมัดจำ)', 'rentals']
+  ].filter(x => x[0]);
+  $('dash-todo').innerHTML = todo.map(([n, t, tab]) => `<button type="button" onclick="switchAdminTab('${tab}')" class="w-full flex justify-between rounded-xl bg-mist px-3 py-2 text-left"><span>${t}</span><b class="text-launchOrange">${n}</b></button>`).join('')
+    + low.slice(0, 6).map(p => `<button type="button" onclick="switchAdminTab('products')" class="w-full flex justify-between rounded-xl bg-mist px-3 py-2 text-left"><span class="truncate">สต็อกเหลือน้อย: ${adminEsc(p.name)}</span><b class="${num(p.stock) <= 0 ? 'text-red-500' : 'text-launchOrange'}">${num(p.stock)}</b></button>`).join('')
+    || '<p class="text-slate">ไม่มีเรื่องค้าง</p>';
+  if (!todo.length && !low.length) $('dash-todo').innerHTML = '<p class="text-slate">ไม่มีเรื่องค้าง</p>';
+}
 
-const ORDER_STATUS_UI = {
-  pending_payment: { label: 'รอตรวจสอบ', cls: 'text-launchOrange bg-mist border-hairline' },
-  completed: { label: 'ส่งมอบแล้ว', cls: 'text-appleBlue bg-mist border-hairline' },
-  cancelled: { label: 'ยกเลิก', cls: 'text-slate bg-mist border-hairline' }
-};
-
-async function renderAdminOrders() {
-  const tbody = document.getElementById('admin-orders-table-body');
-  const empty = document.getElementById('admin-orders-empty');
-  if (!tbody) return;
-
-  let orders = [];
-  try {
-    const snap = await getDocs(collection(db, 'orders'));
-    snap.forEach(d => orders.push({ id: d.id, ...d.data() }));
-  } catch (e) {
-    console.warn('Load orders failed:', e);
-    triggerToast('โหลดคำสั่งซื้อไม่สำเร็จ (ต้องเข้าสู่ระบบด้วยบัญชีแอดมิน)');
-  }
-  orders.sort((a, b) => (tsToDate(b.createdAt)?.getTime() || 0) - (tsToDate(a.createdAt)?.getTime() || 0));
-
-  // Revenue counts only orders whose payment was verified.
-  const done = orders.filter(o => o.status === 'completed');
-  const rev = done.reduce((sum, o) => sum + (Number(o.amount) || 0), 0);
-  const promptPayCount = orders.filter(o => o.paymentMethod === 'promptpay').length;
-  const trueMoneyCount = orders.filter(o => o.paymentMethod === 'truemoney').length;
-
-  const mRev = document.getElementById('metric-order-revenue');
-  const mCount = document.getElementById('metric-order-count');
-  const mPP = document.getElementById('metric-order-promptpay');
-  const mTM = document.getElementById('metric-order-truemoney');
-
-  if (mRev) mRev.innerText = `฿${rev.toFixed(2)}`;
-  if (mCount) mCount.innerText = orders.length;
-  if (mPP) mPP.innerText = promptPayCount;
-  if (mTM) mTM.innerText = trueMoneyCount;
-
-  if (orders.length === 0) {
-    tbody.innerHTML = '';
-    if (empty) empty.classList.remove('hidden');
-    return;
-  }
-  if (empty) empty.classList.add('hidden');
-
-  tbody.innerHTML = orders.map(o => {
-    const acc = o.accountDelivered || {};
-    const st = ORDER_STATUS_UI[o.status] || { label: o.status || '-', cls: 'text-slate bg-mist border-hairline' };
-    const when = tsToDate(o.createdAt);
-    const idArg = adminEsc(JSON.stringify(o.id));
-    const actions = o.status === 'pending_payment' ? `
-          <button type="button" onclick="approveOrder(${idArg})" class="apple-pricing-pill px-3 py-1 text-[11px]">ยืนยันชำระ &amp; ส่งมอบ</button>
-          <button type="button" onclick="cancelOrder(${idArg})" class="apple-explore-pill px-3 py-1 text-[11px] ml-1">ยกเลิก</button>` : '';
-    return `
-      <tr class="hover:bg-mist/70 transition-colors border-b border-hairline">
-        <td class="py-3 px-4 font-mono font-bold text-ink">${adminEsc(o.orderNumber || o.id)}</td>
-        <td class="py-3 px-4 text-slate">${when ? when.toLocaleString('th-TH') : '-'}</td>
-        <td class="py-3 px-4 font-medium text-ink">${adminEsc(o.productName)} <span class="text-slate font-normal">×${adminEsc(o.quantity || 1)}</span>
-          <div class="text-[11px] text-slate font-normal">${adminEsc(o.userEmail || '')} ${o.buyerContact ? '· ' + adminEsc(o.buyerContact) : (o.productType === 'service' ? '· ' + adminEsc(o.buyerEmail || '') : '')}</div></td>
-        <td class="py-3 px-4 font-mono font-bold text-ink">฿${Number(o.amount || 0).toFixed(2)}${o.promoCode ? `<div class="text-[11px] text-slate font-normal">โค้ด ${adminEsc(o.promoCode)}</div>` : ''}</td>
-        <td class="py-3 px-4 uppercase font-semibold text-slate">${adminEsc(o.paymentMethod || '-')}
-          <div class="text-[11px] normal-case font-normal break-all select-all">${adminEsc(o.paymentProof || '')}</div></td>
-        <td class="py-3 px-4 font-mono text-xs select-all text-slate">${acc.username ? `${adminEsc(acc.username)}:${adminEsc(acc.password)}` : '-'}</td>
-        <td class="py-3 px-4"><span class="inline-block px-2 py-0.5 rounded-full text-[10px] font-semibold border ${st.cls}">${adminEsc(st.label)}</span></td>
-        <td class="py-3 px-4 whitespace-nowrap">${actions}</td>
-      </tr>
-    `;
+// ==========================================
+// RENTALS (เช่าไอดี): the Worker does every state change; this tab only lists and closes them
+// ==========================================
+const RENT_STATUS = { active: ['กำลังเช่า', 'text-appleBlue'], expired: ['หมดเวลา · รอตรวจ', 'text-launchOrange'], returned: ['คืนแล้ว · รอตรวจ', 'text-launchOrange'], closed: ['ปิดรายการแล้ว', 'text-slate'] };
+function setRentalFilter(f) { rentalFilter = f; renderAdminRentals(); }
+function renderAdminRentals() {
+  const body = $('admin-rentals-body'); if (!body) return;
+  ['todo', 'active', 'all'].forEach(k => { const b = $(`rf-${k}`); if (b) { b.classList.toggle('!bg-ink', k === rentalFilter); b.classList.toggle('!text-gallery', k === rentalFilter); } });
+  const rows = RENTALS.filter(r => rentalFilter === 'all' || (rentalFilter === 'active' ? r.status === 'active' : r.status === 'returned' || r.status === 'expired'));
+  $('admin-rentals-empty').classList.toggle('hidden', rows.length > 0);
+  const t = (ms) => new Date(num(ms)).toLocaleString('th-TH', { dateStyle: 'short', timeStyle: 'short' });
+  body.innerHTML = rows.map(r => {
+    const [label, cls] = RENT_STATUS[r.status] || [r.status, 'text-slate'];
+    const id = adminEsc(JSON.stringify(r.id));
+    const todo = r.status === 'returned' || r.status === 'expired';
+    const dep = { held: 'ถือมัดจำ', refunded: 'คืนแล้ว', forfeited: 'ยึดแล้ว', none: '' }[r.depositStatus] || '';
+    return `<tr class="border-b border-hairline">
+      <td class="py-3 px-4"><div class="font-medium">${adminEsc(r.userEmail || r.nameMask || '-')}</div><div class="text-[11px] text-slate line-clamp-1">${adminEsc(r.productName)}</div>${r.problem ? `<div class="text-[11px] text-red-500">⚠ แจ้งปัญหา${r.note ? ': ' + adminEsc(r.note) : ''}</div>` : ''}</td>
+      <td class="py-3 px-4 text-slate">${t(r.startMs)}<br>ถึง ${t(r.endMs)}<div class="text-[11px]">${adminEsc(r.hours)} ชม.${num(r.extended) ? ` · ต่อ ${adminEsc(r.extended)} ครั้ง` : ''} · ดูรหัส ${adminEsc(r.viewCount || 0)} ครั้ง</div></td>
+      <td class="py-3 px-4 font-mono">฿${money(r.price)}<div class="text-[11px] text-slate">มัดจำ ฿${money(r.deposit)} ${dep}</div></td>
+      <td class="py-3 px-4 font-medium ${cls}">${label}</td>
+      <td class="py-3 px-4 text-right whitespace-nowrap">${todo ? `<button onclick='closeRental(${id}, "refund")' class="apple-pricing-pill px-3 py-1 text-[11px]">คืนมัดจำ</button> <button onclick='closeRental(${id}, "forfeit")' class="apple-explore-pill px-3 py-1 text-[11px] text-red-500 border-red-200">ยึดมัดจำ</button>` : ''}</td></tr>`;
   }).join('');
 }
+async function closeRental(id, action) {
+  const r = RENTALS.find(x => x.id === id); if (!r) return;
+  const word = action === 'refund' ? `คืนมัดจำ ฿${money(r.deposit)} ให้ลูกค้า` : `ยึดมัดจำ ฿${money(r.deposit)}`;
+  const pw = prompt(`${word}\nและเปิดไอดีให้เช่าต่อ\n\nถ้าเปลี่ยนรหัสผ่านไอดีแล้ว ใส่รหัสผ่านใหม่ตรงนี้ (เว้นว่างถ้าไม่เปลี่ยน)\nกดยกเลิกเพื่อไม่ทำอะไร`, '');
+  if (pw === null) return;
+  try {
+    await callWorker('/admin/rent', { rentalId: id, action, ...(pw.trim() ? { password: pw.trim() } : {}) });
+    triggerToast(action === 'refund' ? 'คืนมัดจำและเปิดไอดีแล้ว' : 'ยึดมัดจำและเปิดไอดีแล้ว', 'success');
+  } catch (e) { triggerToast(e.message || 'ทำรายการไม่สำเร็จ', 'error'); }
+}
 
-// Admin verifies the payment (slip / voucher) by hand, then this hands the goods over. The stock
-// item, stock count and order status change in one transaction so two admins cannot deliver the
-// same account twice.
+// ==========================================
+// CATEGORIES (no built-in defaults: deleting the last one leaves the list empty)
+// ==========================================
+function renderAdminCategories() {
+  const tbody = $('admin-categories-table-body'); if (!tbody) return;
+  tbody.innerHTML = CATS.length ? CATS.map(c => {
+    const id = adminEsc(JSON.stringify(c.id));
+    return `<tr class="border-b border-hairline">
+      <td class="py-3 px-4 font-medium">${c.image ? `<img src="${adminEsc(c.image)}" alt="" class="inline-block w-10 h-6 object-cover rounded mr-2 align-middle">` : ''}${adminEsc(c.name)}<div class="text-[11px] text-slate font-mono font-normal">${adminEsc(c.id)}</div></td>
+      <td class="py-3 px-4 text-slate">${adminEsc(KIND_LABEL[c.kind] || c.kind)}</td>
+      <td class="py-3 px-4 font-mono">${c.kind === 'service' ? `ขั้นต่ำ ${adminEsc(c.minQty || 1)} ${adminEsc(c.unit || '')}` : '-'}</td>
+      <td class="py-3 px-4 font-mono text-slate">${PRODUCTS.filter(p => p.category === c.id).length}</td>
+      <td class="py-3 px-4 text-right whitespace-nowrap"><button onclick='editCategory(${id})' class="apple-explore-pill px-3 py-1 text-[11px]">แก้ไข</button> <button onclick='deleteCategory(${id})' class="apple-explore-pill px-3 py-1 text-[11px] text-red-500 border-red-200">ลบ</button></td></tr>`;
+  }).join('') : `<tr><td colspan="5" class="py-12 text-center text-slate">ยังไม่มีหมวดหมู่ · สินค้าทั้งหมดจะแสดงในหน้าร้านตามปกติ</td></tr>`;
+}
+function editCategory(id) {
+  const c = categoryOf(CATS, id); if (!c) return;
+  const set = (k, v) => { $(k).value = v ?? ''; };
+  set('cat-edit-id', c.id); set('cat-name', c.name); set('cat-kind', c.kind); set('cat-image', c.image); set('cat-unit', c.unit); set('cat-min', c.minQty); set('cat-order', c.order);
+  toggleCategoryKind(); $('cat-name').focus();
+}
+function resetCategoryForm() { $('category-form').reset(); $('cat-edit-id').value = ''; toggleCategoryKind(); }
+function toggleCategoryKind() { $('cat-service-fields')?.classList.toggle('hidden', $('cat-kind').value !== 'service'); }
+async function handleCategorySubmit(e) {
+  e.preventDefault();
+  const kind = $('cat-kind').value;
+  const id = $('cat-edit-id').value || 'cat_' + Date.now().toString(36);
+  const data = { name: $('cat-name').value.trim(), kind, order: num($('cat-order').value), image: formatUrl($('cat-image').value) || deleteField(), updatedAt: serverTimestamp() };
+  if (kind === 'service') { data.unit = $('cat-unit').value.trim() || 'กอง'; data.minQty = Math.max(1, Math.floor(num($('cat-min').value)) || 1); }
+  else { data.unit = deleteField(); data.minQty = deleteField(); }
+  try { await setDoc(doc(db, 'categories', id), data, { merge: true }); triggerToast('บันทึกหมวดหมู่แล้ว', 'success'); resetCategoryForm(); }
+  catch (err) { triggerToast('บันทึกหมวดหมู่ไม่สำเร็จ', 'error'); }
+}
+async function deleteCategory(id) {
+  const used = PRODUCTS.filter(p => p.category === id).length;
+  if (!confirm(used ? `มีสินค้า ${used} รายการในหมวดนี้ สินค้าจะย้ายไป "สินค้าอื่น ๆ" ลบต่อหรือไม่?` : 'ยืนยันลบหมวดหมู่นี้?')) return;
+  try { await deleteDoc(doc(db, 'categories', id)); triggerToast('ลบหมวดหมู่แล้ว', 'success'); } catch (e) { triggerToast('ลบไม่สำเร็จ', 'error'); }
+}
+
+// ==========================================
+// ORDERS
+// ==========================================
+const ORDER_UI = {
+  pending_payment: ['รอตรวจสอบ', 'bg-[#fff3e6] text-[#a04a00]'], processing: ['กำลังดำเนินการ', 'bg-[#e8f1fd] text-[#0058b9]'],
+  completed: ['ส่งมอบสำเร็จ', 'bg-[#e8f8ee] text-[#0a7a3b]'], cancelled: ['ยกเลิก', 'bg-mist text-slate']
+};
+window.getAdminUsers = () => USERS;
+const userOf = (uid) => USERS.find(u => u.uid === uid) || {};
+const buyerName = (o) => userOf(o.userId).username || String(o.userEmail || '').split('@')[0] || 'user';
+
+function renderAdminOrders() {
+  const list = $('admin-orders-list'); if (!list) return;
+  const done = ORDERS.filter(o => o.status === 'completed');
+  $('metric-order-revenue').innerText = `฿${money(done.reduce((s, o) => s + num(o.amount), 0))}`;
+  $('metric-order-count').innerText = ORDERS.length;
+  $('metric-order-pending').innerText = ORDERS.filter(o => o.status === 'pending_payment').length;
+  $('metric-order-processing').innerText = ORDERS.filter(o => o.status === 'processing').length;
+  const f = $('order-status-filter').value, q = ($('order-search').value || '').toLowerCase().trim();
+  const rows = ORDERS.filter(o => (f === 'all' || (f === 'active' ? ['pending_payment', 'processing'].includes(o.status) : o.status === f))
+    && (!q || [o.orderNumber, o.productName, o.userEmail, o.buyerEmail, o.buyerFacebook, o.buyerContact, buyerName(o)].some(v => String(v || '').toLowerCase().includes(q))));
+  $('admin-orders-empty').classList.toggle('hidden', rows.length > 0);
+  list.innerHTML = rows.slice(0, 200).map(o => {
+    const id = adminEsc(JSON.stringify(o.id));
+    const [label, cls] = ORDER_UI[o.status] || [o.status, 'bg-mist text-slate'];
+    const srv = o.productType === 'service';
+    const accs = Array.isArray(o.accountsDelivered) && o.accountsDelivered.length ? o.accountsDelivered : (o.accountDelivered?.username ? [o.accountDelivered] : []);
+    const btn = (fn, text, primary) => `<button type="button" onclick='${fn}(${id})' class="${primary ? 'apple-pricing-pill' : 'apple-explore-pill'} px-3 py-1.5 text-[11px]">${text}</button>`;
+    const actions = [
+      can('pay') && o.status === 'pending_payment' && btn('approveOrder', srv ? 'ยืนยันชำระ › เข้าคิว' : 'ยืนยันชำระ & ส่งไอดี', true),
+      o.status === 'processing' && (srv || !STAFF_ONLY_QUEUE()) && o.queueStatus !== 'working' && btn('startWork', 'เริ่มทำงาน', false),
+      o.status === 'processing' && (srv || !STAFF_ONLY_QUEUE()) && btn('finishServiceOrder', 'ส่งมอบสำเร็จ', true),
+      can('pay') && o.gamePassword && o.status === 'completed' && btn('clearGamePassword', 'ลบรหัสเกม', false),
+      (!STAFF_ONLY_QUEUE() || (srv && o.status === 'processing')) && btn('openNote', o.adminNote ? 'แก้หมายเหตุ' : 'หมายเหตุถึงลูกค้า', false),
+      can('pay') && o.hasSlip && btn('viewSlip', 'ดูสลิป', false),
+      can('pay') && ['pending_payment', 'processing'].includes(o.status) && btn('cancelOrder', 'ยกเลิก', false)
+    ].filter(Boolean).join(' ');
+    return `<article class="apple-card p-4 sm:p-5 text-xs space-y-3">
+      <div class="flex flex-wrap items-start justify-between gap-3">
+        <div class="min-w-0">
+          <p class="font-mono font-bold text-ink">${adminEsc(o.orderNumber || o.id)} <span class="font-normal text-slate">· ${adminEsc(fmtDate(o.createdAt))}</span></p>
+          <p class="text-sm font-semibold mt-0.5">${adminEsc(o.productName)} <span class="font-normal text-slate">× ${adminEsc(o.quantity || 1)} ${adminEsc(o.unit || '')}${num(o.bonusQty) ? ` (+แถม ${adminEsc(o.bonusQty)})` : ''}</span></p>
+          <p class="text-slate mt-0.5">ผู้ซื้อ: <button type="button" class="text-appleBlue hover:underline" onclick='openUserModal(${adminEsc(JSON.stringify(o.userId || ''))})'>${adminEsc(buyerName(o))}</button>
+            ${o.buyerFacebook ? ` · FB: <span class="select-all">${adminEsc(o.buyerFacebook)}</span>` : ''}${o.buyerEmail ? ` · อีเมล: <span class="select-all">${adminEsc(o.buyerEmail)}</span>` : ''}${o.buyerContact && !o.gameEmail ? ` · ในเกม: ${adminEsc(o.buyerContact)}` : ''}${o.playTime ? ` · เวลา: ${adminEsc(o.playTime)}` : ''}</p>
+          ${o.gameEmail ? `<p class="text-slate">ล็อกอินเกม: <span class="font-mono select-all">${adminEsc(o.gameEmail)}</span> / <span class="font-mono select-all">${adminEsc(o.gamePassword || '(ลบแล้ว)')}</span></p>` : ''}
+        </div>
+        <div class="text-right">
+          <p class="text-base font-display font-semibold">฿${money(o.amount)}</p>
+          <p class="text-slate">${o.paymentMethod === 'wallet' ? 'เครดิต (ชำระแล้ว)' : o.paymentMethod === 'prize' ? '🎁 ของรางวัลกล่องสุ่ม' : o.paymentMethod === 'truemoney' ? 'TrueMoney' : 'พร้อมเพย์'}${o.promoCode ? ` · โค้ด ${adminEsc(o.promoCode)} -฿${money(o.discount)}` : ''}</p>
+          <span class="inline-block mt-1 px-2.5 py-0.5 rounded-full font-semibold ${cls}">${label}${o.status === 'processing' && o.queueStatus === 'working' ? ' · กำลังทำ' : ''}</span>
+        </div>
+      </div>
+      ${o.paymentProof && o.paymentMethod === 'truemoney' ? `<p class="text-slate break-all">ซอง: <a class="text-appleBlue select-all" href="${adminEsc(o.paymentProof)}" target="_blank" rel="noopener">${adminEsc(o.paymentProof)}</a></p>` : ''}
+      ${accs.length ? `<p class="text-slate">ไอดีที่ส่งมอบ: ${accs.map(a => `<span class="font-mono select-all">${adminEsc(a.username)}:${adminEsc(a.password)}</span>`).join(', ')}</p>` : ''}
+      ${o.adminNote ? `<p class="rounded-xl bg-[#e8f1fd] text-[#003d80] px-3 py-2">หมายเหตุถึงลูกค้า: ${adminEsc(o.adminNote)}</p>` : ''}
+      <div class="flex flex-wrap gap-1.5 pt-1">${actions}</div>
+    </article>`;
+  }).join('');
+}
+function refreshOrders() { renderAdminOrders(); triggerToast('อัปเดตรายการล่าสุดแล้ว'); }
+
+/** Public feed + counters for a finished order (stats/public, recent_orders). Called inside a transaction. */
+function recordSale(txn, orderId, o) {
+  if (o.paymentMethod === 'prize') return; // free loot-box prize: not a sale
+  txn.set(doc(db, 'stats', 'public'), { orders: increment(1), sales: increment(num(o.amount)) }, { merge: true });
+  txn.set(doc(db, 'recent_orders', orderId), { productName: String(o.productName || '').slice(0, 120), amount: num(o.amount), buyerMask: maskName(buyerName(o)), kind: o.productType === 'service' ? 'service' : 'account', createdAt: serverTimestamp() });
+}
+
 async function approveOrder(orderId) {
-  if (!confirm('ยืนยันว่าตรวจสอบการชำระเงินแล้ว และต้องการส่งมอบออเดอร์นี้?')) return;
+  const o0 = ORDERS.find(x => x.id === orderId); if (!o0) return;
+  const srv = o0.productType === 'service';
+  if (!confirm(srv ? 'ยืนยันว่าได้รับเงินแล้ว และนำงานเข้าคิว?' : 'ยืนยันว่าได้รับเงินแล้ว และส่งไอดีให้ลูกค้า?')) return;
   try {
     const orderRef = doc(db, 'orders', orderId);
-    const orderSnap = await getDoc(orderRef);
-    if (!orderSnap.exists()) throw new Error('NO_ORDER');
-    const order = orderSnap.data();
-    const prodRef = doc(db, 'products', order.productId);
-    const isService = order.productType === 'service';
-
-    let itemRef = null;
-    if (!isService) {
-      const found = await getDocs(query(collection(prodRef, 'stock_items'), where('status', '==', 'available'), limit(1)));
-      if (found.empty) { triggerToast('ไม่มีไอดีในคลังสำหรับสินค้านี้ กรุณาเติมสต็อกก่อน'); return; }
-      itemRef = found.docs[0].ref;
+    const prodRef = doc(db, 'products', o0.productId);
+    const qty = Math.max(1, Math.floor(num(o0.quantity)) || 1);
+    let itemRefs = [];
+    if (!srv) {
+      const found = await getDocs(query(collection(prodRef, 'stock_items'), where('status', '==', 'available'), limit(qty)));
+      if (found.size < qty) { triggerToast(`ไอดีในคลังไม่พอ (มี ${found.size} ต้องการ ${qty}) กรุณาเติมสต็อกก่อน`, 'error'); return; }
+      itemRefs = found.docs.map(d => d.ref);
     }
-
     await runTransaction(db, async (txn) => {
       const oSnap = await txn.get(orderRef);
       const pSnap = await txn.get(prodRef);
-      const iSnap = itemRef ? await txn.get(itemRef) : null;
-      if (oSnap.data().status !== 'pending_payment') throw new Error('NOT_PENDING');
-      const qty = isService ? (Number(order.quantity) || 1) : 1;
-      const update = { status: 'completed', completedAt: serverTimestamp() };
-      if (iSnap) {
-        if (!iSnap.exists() || iSnap.data().status !== 'available') throw new Error('ITEM_TAKEN');
-        const cred = iSnap.data();
-        txn.update(itemRef, { status: 'sold', orderId: order.orderId, soldAt: serverTimestamp() });
-        update.accountDelivered = { username: cred.username, password: cred.password, stockItemId: itemRef.id };
+      const items = [];
+      for (const r of itemRefs) items.push(await txn.get(r));
+      const o = oSnap.data();
+      if (!oSnap.exists() || o.status !== 'pending_payment') throw new Error('NOT_PENDING');
+      if (pSnap.exists()) txn.update(prodRef, { stock: Math.max(0, num(pSnap.data().stock) - qty), updatedAt: serverTimestamp() });
+      if (srv) {
+        txn.update(orderRef, { status: 'processing', queueStatus: 'waiting', paidAt: serverTimestamp() });
+        txn.set(doc(db, 'queue', orderId), { status: 'waiting', updatedAt: serverTimestamp() }, { merge: true });
+      } else {
+        const accs = items.map(s => {
+          if (!s.exists() || s.data().status !== 'available') throw new Error('ITEM_TAKEN');
+          txn.update(s.ref, { status: 'sold', orderId, soldAt: serverTimestamp() });
+          return { username: s.data().username, password: s.data().password, stockItemId: s.id };
+        });
+        txn.update(orderRef, { status: 'completed', completedAt: serverTimestamp(), accountsDelivered: accs, accountDelivered: accs[0] });
+        recordSale(txn, orderId, o);
       }
-      if (pSnap.exists()) {
-        txn.update(prodRef, { stock: Math.max(0, (Number(pSnap.data().stock) || 0) - qty), updatedAt: serverTimestamp() });
-      }
-      txn.update(orderRef, update);
+      if (o.promoCode) txn.set(doc(db, 'promo_codes', o.promoCode), { usedCount: increment(1) }, { merge: true });
     });
-
-    if (order.promoCode) {
-      try { await updateDoc(doc(db, 'promo_codes', order.promoCode), { usedCount: increment(1) }); } catch (_) {}
-    }
-    triggerToast('ส่งมอบออเดอร์เรียบร้อย');
+    triggerToast(srv ? 'นำงานเข้าคิวแล้ว' : 'ส่งมอบไอดีแล้ว', 'success');
   } catch (e) {
-    console.warn('Approve order failed:', e);
-    triggerToast(e.message === 'NOT_PENDING' ? 'ออเดอร์นี้ถูกดำเนินการไปแล้ว' : e.message === 'ITEM_TAKEN' ? 'ไอดีนี้ถูกใช้ไปแล้ว ลองกดอีกครั้ง' : 'ส่งมอบไม่สำเร็จ ตรวจสอบสิทธิ์แอดมิน');
+    console.warn('approve:', e);
+    triggerToast(e.message === 'NOT_PENDING' ? 'ออเดอร์นี้ถูกดำเนินการไปแล้ว' : e.message === 'ITEM_TAKEN' ? 'ไอดีถูกใช้ไปแล้ว ลองกดอีกครั้ง' : 'ดำเนินการไม่สำเร็จ', 'error');
   }
-  renderAdminOrders();
 }
 
+async function startWork(orderId) {
+  try {
+    const b = writeBatch(db);
+    b.update(doc(db, 'orders', orderId), { queueStatus: 'working', workStartedAt: serverTimestamp() });
+    b.set(doc(db, 'queue', orderId), { status: 'working', startedAt: serverTimestamp(), updatedAt: serverTimestamp() }, { merge: true });
+    await b.commit();
+    triggerToast('อัปเดตเป็นกำลังทำแล้ว', 'success');
+  } catch (e) { triggerToast('อัปเดตไม่สำเร็จ', 'error'); }
+}
+async function finishServiceOrder(orderId) {
+  if (!confirm('งานเสร็จแล้ว? ระบบจะลบรหัสผ่านเกมของลูกค้าออกด้วย')) return;
+  try {
+    const ref = doc(db, 'orders', orderId);
+    await runTransaction(db, async (txn) => {
+      const s = await txn.get(ref);
+      if (!s.exists() || s.data().status !== 'processing') throw new Error('NOT_PROCESSING');
+      txn.update(ref, { status: 'completed', queueStatus: 'done', completedAt: serverTimestamp(), gamePassword: deleteField(), gamePasswordClearedAt: serverTimestamp() });
+      txn.set(doc(db, 'queue', orderId), { status: 'done', updatedAt: serverTimestamp() }, { merge: true });
+      recordSale(txn, orderId, s.data());
+    });
+    triggerToast('ปิดงานแล้ว ลบรหัสเกมแล้ว', 'success');
+  } catch (e) { triggerToast(e.message === 'NOT_PROCESSING' ? 'สถานะออเดอร์เปลี่ยนไปแล้ว' : 'ปิดงานไม่สำเร็จ', 'error'); }
+}
 async function cancelOrder(orderId) {
-  if (!confirm('ยืนยันยกเลิกออเดอร์นี้?')) return;
+  const o = ORDERS.find(x => x.id === orderId); if (!o) return;
+  const refund = o.status === 'processing' && num(o.amount) > 0; // money was received (wallet or approved transfer); a free prize has nothing to give back
+  const reason = prompt(`เหตุผลที่ยกเลิก (ลูกค้าจะเห็น)${refund ? `\nระบบจะคืนเงิน ฿${money(o.amount)} เข้าเครดิตของลูกค้า` : ''}`, '');
+  if (reason === null) return;
   try {
-    await updateDoc(doc(db, 'orders', orderId), { status: 'cancelled', cancelledAt: serverTimestamp() });
-    triggerToast('ยกเลิกออเดอร์แล้ว');
-  } catch (e) {
-    console.warn('Cancel order failed:', e);
-    triggerToast('ยกเลิกไม่สำเร็จ ตรวจสอบสิทธิ์แอดมิน');
-  }
-  renderAdminOrders();
+    await runTransaction(db, async (txn) => {
+      const ref = doc(db, 'orders', orderId);
+      const s = await txn.get(ref);
+      const cur = s.data();
+      if (!['pending_payment', 'processing'].includes(cur.status)) throw new Error('DONE');
+      const pRef = doc(db, 'products', cur.productId);
+      const p = cur.status === 'processing' ? await txn.get(pRef) : null;
+      txn.update(ref, { status: 'cancelled', cancelledAt: serverTimestamp(), gamePassword: deleteField(), ...(reason.trim() ? { adminNote: reason.trim() } : {}) });
+      txn.set(doc(db, 'queue', orderId), { status: 'cancelled', updatedAt: serverTimestamp() }, { merge: true });
+      if (p?.exists()) txn.update(pRef, { stock: num(p.data().stock) + (num(cur.quantity) || 1) });
+      if (cur.status === 'processing' && num(cur.amount) > 0) {
+        txn.set(doc(db, 'users', cur.userId), { walletBalance: increment(num(cur.amount)) }, { merge: true });
+        txn.set(doc(collection(db, 'wallet_logs')), { uid: cur.userId, delta: num(cur.amount), note: `คืนเงินออเดอร์ ${cur.orderNumber || orderId}`, by: me?.uid || '', at: serverTimestamp() });
+      }
+    });
+    triggerToast('ยกเลิกออเดอร์แล้ว', 'success');
+  } catch (e) { triggerToast(e.message === 'DONE' ? 'ออเดอร์นี้ปิดไปแล้ว' : 'ยกเลิกไม่สำเร็จ', 'error'); }
 }
-
-function refreshOrders() {
-  renderAdminOrders();
-  triggerToast('รีเฟรชข้อมูลคำสั่งซื้อเรียบร้อย');
+async function clearGamePassword(orderId) {
+  if (!confirm('ลบรหัสผ่านเกมของออเดอร์นี้?')) return;
+  try { await updateDoc(doc(db, 'orders', orderId), { gamePassword: deleteField(), gamePasswordClearedAt: serverTimestamp() }); triggerToast('ลบรหัสเกมแล้ว', 'success'); }
+  catch (e) { triggerToast('ลบไม่สำเร็จ', 'error'); }
+}
+function openNote(orderId) {
+  const o = ORDERS.find(x => x.id === orderId); if (!o) return;
+  $('note-order-id').value = orderId;
+  $('note-modal-order').textContent = `${o.orderNumber || orderId} · ${o.productName}`;
+  $('note-text').value = o.adminNote || '';
+  openModal('note-modal'); $('note-text').focus();
+}
+async function saveOrderNote(e) {
+  e.preventDefault();
+  const id = $('note-order-id').value, text = $('note-text').value.trim();
+  try { await updateDoc(doc(db, 'orders', id), { adminNote: text || deleteField(), adminNoteAt: serverTimestamp() }); closeModal('note-modal'); triggerToast('บันทึกหมายเหตุแล้ว', 'success'); }
+  catch (err) { triggerToast('บันทึกไม่สำเร็จ', 'error'); }
+}
+async function viewSlip(id) {
+  $('slip-modal-img').removeAttribute('src');
+  $('slip-modal-meta').textContent = 'กำลังโหลด…';
+  openModal('slip-modal');
+  try {
+    const s = await getDoc(doc(db, 'slip_images', id));
+    if (!s.exists()) { $('slip-modal-meta').textContent = 'ไม่พบรูปสลิป'; return; }
+    $('slip-modal-img').src = s.data().image;
+    $('slip-modal-meta').textContent = `อัปโหลดเมื่อ ${fmtDate(s.data().createdAt)}`;
+  } catch (e) { $('slip-modal-meta').textContent = 'โหลดสลิปไม่สำเร็จ'; }
 }
 
 // ==========================================
-// 3. PROMO CODE MANAGEMENT (Moved to js/back/code.js)
+// TOP-UPS + PROMOTIONS
 // ==========================================
-// Separate module js/back/code.js handles renderAdminPromos, openPromoModal,
-// closePromoModal, handlePromoTypeChange, handleSavePromoModal, deletePromo.
+const TOPUP_UI = { pending: ['รอตรวจสอบ', 'bg-[#fff3e6] text-[#a04a00]'], completed: ['เติมแล้ว', 'bg-[#e8f8ee] text-[#0a7a3b]'], rejected: ['ไม่อนุมัติ', 'bg-mist text-slate'] };
+function renderAdminTopups() {
+  const list = $('admin-topups-list'); if (!list) return;
+  const f = $('topup-status-filter').value;
+  const rows = TOPUPS.filter(t => f === 'all' || t.status === f);
+  $('admin-topups-empty').classList.toggle('hidden', rows.length > 0);
+  list.innerHTML = rows.slice(0, 200).map(t => {
+    const id = adminEsc(JSON.stringify(t.id));
+    const [label, cls] = TOPUP_UI[t.status] || [t.status, 'bg-mist text-slate'];
+    const u = userOf(t.uid);
+    const promo = TPROMOS.find(p => p.id === t.promoId);
+    return `<article class="apple-card p-4 sm:p-5 text-xs flex flex-col sm:flex-row sm:items-center gap-3 justify-between">
+      <div class="min-w-0">
+        <p class="font-mono font-bold">${adminEsc(t.txnId || t.id)} <span class="font-normal text-slate">· ${adminEsc(fmtDate(t.createdAt))}</span></p>
+        <p class="mt-0.5">ผู้ใช้: <button type="button" class="text-appleBlue hover:underline" onclick='openUserModal(${adminEsc(JSON.stringify(t.uid || ''))})'>${adminEsc(u.username || String(t.email || '').split('@')[0] || t.uid)}</button> · ${t.paymentMethod === 'angpao' ? 'ซองอั่งเปา (อัตโนมัติ)' : t.paymentMethod === 'truemoney' ? 'TrueMoney' : 'พร้อมเพย์'}${t.verifiedVia ? ` · ตรวจอัตโนมัติ (${adminEsc(t.verifiedVia)})` : ''}</p>
+        ${t.paymentMethod === 'truemoney' && t.proofRef ? `<p class="text-slate break-all"><a class="text-appleBlue select-all" href="${adminEsc(t.proofRef)}" target="_blank" rel="noopener">${adminEsc(t.proofRef)}</a></p>` : (t.proofRef && !t.hasSlip ? `<p class="text-slate break-all select-all">อ้างอิง: ${adminEsc(t.proofRef)}</p>` : '')}
+        ${t.adminNote ? `<p class="text-slate">หมายเหตุ: ${adminEsc(t.adminNote)}</p>` : ''}
+      </div>
+      <div class="flex items-center gap-3 sm:text-right">
+        <div><p class="text-base font-display font-semibold">฿${money(t.amount)}</p><p class="text-slate">ได้เครดิต ${money(t.finalCredit ?? t.amount)}${num(t.bonusCredit) ? ` (โบนัส ${money(t.bonusCredit)}${promo ? ` · โปรเติมครบ ${money(promo.minAmount, 0)}` : ''})` : ''}</p>
+          <span class="inline-block mt-1 px-2.5 py-0.5 rounded-full font-semibold ${cls}">${label}</span></div>
+        <div class="flex flex-col gap-1.5">
+          ${t.hasSlip ? `<button type="button" onclick='viewSlip(${id})' class="apple-explore-pill px-3 py-1.5 text-[11px]">ดูสลิป</button>` : ''}
+          ${t.status === 'pending' ? `<button type="button" onclick='approveTopup(${id})' class="apple-pricing-pill px-3 py-1.5 text-[11px]">อนุมัติ & เติมเครดิต</button><button type="button" onclick='rejectTopup(${id})' class="apple-explore-pill px-3 py-1.5 text-[11px]">ไม่อนุมัติ</button>` : ''}
+        </div>
+      </div>
+    </article>`;
+  }).join('');
+}
+async function approveTopup(id) {
+  const t0 = TOPUPS.find(x => x.id === id);
+  if (!confirm(`ยืนยันได้รับเงิน ฿${money(t0?.amount)} และเติมเครดิต ${money(t0?.finalCredit)} ให้ผู้ใช้?`)) return;
+  try {
+    await runTransaction(db, async (txn) => {
+      const ref = doc(db, 'topup_transactions', id);
+      const s = await txn.get(ref);
+      if (!s.exists() || s.data().status !== 'pending') throw new Error('NOT_PENDING');
+      const t = s.data();
+      txn.set(doc(db, 'users', t.uid), { walletBalance: increment(num(t.finalCredit) || num(t.amount)), lastTopupAt: serverTimestamp() }, { merge: true });
+      txn.update(ref, { status: 'completed', completedAt: serverTimestamp(), approvedBy: me?.uid || '' });
+    });
+    triggerToast('เติมเครดิตแล้ว', 'success');
+  } catch (e) { triggerToast(e.message === 'NOT_PENDING' ? 'รายการนี้ถูกดำเนินการไปแล้ว' : 'เติมเครดิตไม่สำเร็จ', 'error'); }
+}
+async function rejectTopup(id) {
+  const reason = prompt('เหตุผลที่ไม่อนุมัติ (ผู้ใช้จะเห็น)', 'ไม่พบยอดเงินเข้าบัญชี');
+  if (reason === null) return;
+  try {
+    await runTransaction(db, async (txn) => { // never overwrite a top-up that was already credited
+      const ref = doc(db, 'topup_transactions', id), s = await txn.get(ref);
+      if (!s.exists() || s.data().status !== 'pending') throw new Error('NOT_PENDING');
+      txn.update(ref, { status: 'rejected', completedAt: serverTimestamp(), adminNote: reason.trim() });
+    });
+    triggerToast('ไม่อนุมัติรายการแล้ว', 'success');
+  } catch (e) { triggerToast(e.message === 'NOT_PENDING' ? 'รายการนี้ถูกดำเนินการไปแล้ว' : 'ดำเนินการไม่สำเร็จ', 'error'); }
+}
 
+function renderTopupPromos() {
+  const box = $('tpromo-list'); if (!box) return;
+  box.innerHTML = TPROMOS.length ? TPROMOS.map(p => {
+    const id = adminEsc(JSON.stringify(p.id));
+    return `<div class="py-3 flex items-center justify-between gap-3 text-xs">
+      <div><p class="font-semibold">เติมครบ ${money(p.minAmount, 0)} บาท › โบนัส ${p.type === 'percent' ? `${num(p.value)}%` : `${money(p.value, 0)} บาท`} ${p.active === false ? '<span class="text-slate font-normal">(ปิดอยู่)</span>' : ''}</p>${p.label ? `<p class="text-slate">${adminEsc(p.label)}</p>` : ''}</div>
+      <div class="whitespace-nowrap"><button onclick='editTopupPromo(${id})' class="apple-explore-pill px-3 py-1 text-[11px]">แก้ไข</button> <button onclick='deleteTopupPromo(${id})' class="apple-explore-pill px-3 py-1 text-[11px] text-red-500 border-red-200">ลบ</button></div></div>`;
+  }).join('') : '<p class="py-6 text-center text-slate text-xs">ยังไม่มีโปรโมชั่นการเติมเงิน</p>';
+}
+async function saveTopupPromo(e) {
+  e.preventDefault();
+  const type = $('tpromo-type').value, value = num($('tpromo-value').value), minAmount = num($('tpromo-min').value);
+  if (minAmount < 20 || !(value > 0) || (type === 'percent' && value > 100)) return triggerToast('ข้อมูลโปรโมชั่นไม่ถูกต้อง', 'error');
+  const id = $('tpromo-id').value || 'tp_' + Date.now().toString(36);
+  try {
+    await setDoc(doc(db, 'topup_promos', id), { minAmount, type, value, label: $('tpromo-label').value.trim(), active: $('tpromo-active').checked, updatedAt: serverTimestamp() });
+    triggerToast('บันทึกโปรโมชั่นแล้ว', 'success'); resetTopupPromo();
+  } catch (err) { triggerToast('บันทึกไม่สำเร็จ', 'error'); }
+}
+function editTopupPromo(id) {
+  const p = TPROMOS.find(x => x.id === id); if (!p) return;
+  $('tpromo-id').value = p.id; $('tpromo-min').value = p.minAmount; $('tpromo-type').value = p.type; $('tpromo-value').value = p.value;
+  $('tpromo-label').value = p.label || ''; $('tpromo-active').checked = p.active !== false; $('tpromo-min').focus();
+}
+function resetTopupPromo() { $('tpromo-form').reset(); $('tpromo-id').value = ''; $('tpromo-active').checked = true; }
+async function deleteTopupPromo(id) {
+  if (!confirm('ลบโปรโมชั่นนี้?')) return;
+  try { await deleteDoc(doc(db, 'topup_promos', id)); triggerToast('ลบโปรโมชั่นแล้ว', 'success'); } catch (e) { triggerToast('ลบไม่สำเร็จ', 'error'); }
+}
+
+// ==========================================
+// USERS
+// ==========================================
+function renderAdminUsers() {
+  const tbody = $('admin-users-table-body'); if (!tbody) return;
+  $('metric-user-count').innerText = USERS.length;
+  $('metric-user-balance').innerText = `฿${money(USERS.reduce((s, u) => s + num(u.walletBalance), 0), 0)}`;
+  $('metric-user-admins').innerText = USERS.filter(u => u.role === 'admin').length;
+  $('metric-user-suspended').innerText = USERS.filter(u => u.status === 'suspended').length;
+  const q = ($('user-search').value || '').toLowerCase().trim();
+  const rows = USERS.filter(u => !q || [u.username, u.email, u.contactEmail, u.facebook, u.uid].some(v => String(v || '').toLowerCase().includes(q)));
+  $('admin-users-empty').classList.toggle('hidden', rows.length > 0);
+  tbody.innerHTML = rows.slice(0, 300).map(u => `<tr class="border-b border-hairline">
+    <td class="py-3 px-4"><p class="font-semibold">${adminEsc(u.username || '(ไม่มีชื่อ)')}</p><p class="text-[10px] text-slate font-mono">${adminEsc(u.uid)}</p></td>
+    <td class="py-3 px-4 text-slate">${adminEsc(u.contactEmail || (/@tactical\.store$/.test(u.email || '') ? '' : u.email) || '-')}${u.facebook ? `<br>FB: ${adminEsc(u.facebook)}` : ''}</td>
+    <td class="py-3 px-4 font-mono font-semibold">฿${money(u.walletBalance)}</td>
+    <td class="py-3 px-4">${u.role === 'admin' ? '<span class="text-launchOrange font-semibold">Admin</span>' : u.role === 'staff' ? `<span class="font-semibold" title="${adminEsc((u.perms || []).map(p => PERM_LABEL[p] || p).join(', '))}">ทีมงาน (${(u.perms || []).length})</span>` : 'User'}</td>
+    <td class="py-3 px-4">${u.status === 'suspended' ? '<span class="text-launchOrange font-semibold">ระงับ</span>' : '<span class="text-emerald-600">ปกติ</span>'}</td>
+    <td class="py-3 px-4 text-slate">${adminEsc(fmtDate(u.createdAt))}</td>
+    <td class="py-3 px-4 text-right"><button onclick='openUserModal(${adminEsc(JSON.stringify(u.uid))})' class="apple-pricing-pill px-3 py-1 text-[11px]">จัดการ</button></td></tr>`).join('');
+}
+
+let umUid = null;
+function userModalTab(t) {
+  ['info', 'wallet', 'history'].forEach(k => { $(`um-pane-${k}`).classList.toggle('hidden', k !== t); $(`um-tab-${k}`).className = `py-2 rounded-full ${k === t ? 'bg-gallery shadow-sm font-semibold' : 'text-slate'}`; });
+  if (t === 'history') loadUserHistory();
+  if (t === 'wallet') loadWalletLogs();
+}
+function syncPermBox() { $('um-perms-wrap').classList.toggle('hidden', $('um-role').value === 'admin'); }
+window.syncPermBox = syncPermBox;
+function openUserModal(uid) {
+  if (!uid) return;
+  umUid = uid;
+  const u = userOf(uid);
+  $('um-uid').textContent = `UID: ${uid}`;
+  $('um-title').textContent = u.username || 'ผู้ใช้';
+  $('um-username').value = u.username || '';
+  $('um-contact-email').value = u.contactEmail || '';
+  $('um-facebook').value = u.facebook || '';
+  $('um-password').value = '';
+  $('um-role').value = u.role === 'admin' ? 'admin' : 'user';
+  $('um-perms').innerHTML = Object.entries(PERM_LABEL).map(([k, t]) => `<label class="flex items-start gap-2 py-1"><input type="checkbox" value="${k}" ${(u.perms || []).includes(k) ? 'checked' : ''}> <span>${adminEsc(t)}</span></label>`).join('');
+  syncPermBox();
+  document.querySelectorAll('#um-pane-info input[id^="um-"], #um-pane-info select').forEach(el => { if (['um-username', 'um-password', 'um-role', 'um-status'].includes(el.id) || el.closest('#um-perms-wrap')) el.disabled = !ADMIN; });
+  $('um-status').value = u.status === 'suspended' ? 'suspended' : 'active';
+  $('um-login-email').textContent = u.email || '-';
+  $('um-balance').textContent = `฿${money(u.walletBalance)}`;
+  showVault(u);
+  $('um-worker-note').textContent = workerUrl() ? '' : 'ยังไม่ได้ตั้งค่า Worker: เปลี่ยนชื่อผู้ใช้สำหรับล็อกอิน / รหัสผ่าน / สิทธิ์ Admin / ระงับการล็อกอิน จะยังไม่มีผล (บันทึกได้เฉพาะข้อมูลในฐานข้อมูล)';
+  $('um-amount').value = ''; $('um-wnote').value = '';
+  userModalTab('info');
+  openModal('user-modal');
+}
+const vaultMs = (u) => tsMs(u?.vaultUntil);
+function showVault(u) { const t = vaultMs(u); $('um-vault').textContent = t > Date.now() ? `ถึง ${new Date(t).toLocaleDateString('th-TH', { dateStyle: 'medium' })}` : 'ยังไม่เปิดสิทธิ์'; }
+/** Adds N days on top of what is left (never before today); 0 = close now. Only admins can write this field (rules). */
+async function grantVault(add) {
+  const days = Math.round(num($('um-vault-days').value));
+  if (add && !(days >= 1 && days <= 365)) return triggerToast('ใส่จำนวนวัน 1-365', 'error');
+  const until = add ? Math.max(Date.now(), vaultMs(userOf(umUid))) + days * 864e5 : 0;
+  try {
+    await setDoc(doc(db, 'users', umUid), { vaultUntil: add ? Timestamp.fromMillis(until) : null }, { merge: true });
+    showVault({ vaultUntil: { toMillis: () => until } });
+    triggerToast(add ? `เปิดสิทธิ์คลังไอดี +${days} วัน` : 'ปิดสิทธิ์คลังไอดีแล้ว', 'success');
+  } catch (e) { triggerToast('บันทึกไม่สำเร็จ', 'error'); }
+}
+async function saveUserInfo(e) {
+  e.preventDefault();
+  const u = userOf(umUid);
+  const username = $('um-username').value.trim();
+  const password = $('um-password').value;
+  const role = $('um-role').value, status = $('um-status').value;
+  if (username && ([...username].length < 3 || /[@\s]/.test(username))) return triggerToast('ชื่อผู้ใช้ 3–24 ตัวอักษร ห้ามมีช่องว่างหรือ @', 'error');
+  if (password && password.length < 6) return triggerToast('รหัสผ่านต้องมีอย่างน้อย 6 ตัวอักษร', 'error');
+  if (umUid === me?.uid && (role !== 'admin' || status === 'suspended')) return triggerToast('ห้ามลดสิทธิ์หรือระงับบัญชีของตัวเอง', 'error');
+  const authChange = {};
+  if (username && username !== u.username) authChange.username = username;
+  if (password) authChange.password = password;
+  if ((role === 'admin') !== (u.role === 'admin')) authChange.admin = role === 'admin';
+  const perms = role === 'admin' ? [] : [...document.querySelectorAll('#um-perms input:checked')].map(i => i.value);
+  const oldPerms = Array.isArray(u.perms) ? u.perms : [];
+  if (perms.join() !== oldPerms.join()) authChange.perms = perms;
+  const newRole = role === 'admin' ? 'admin' : perms.length ? 'staff' : 'user';
+  if ((status === 'suspended') !== (u.status === 'suspended')) authChange.disabled = status === 'suspended';
+  const btn = $('um-save'); btn.disabled = true;
+  try {
+    let loginEmail = null;
+    if (Object.keys(authChange).length && workerUrl()) {
+      const r = await callWorker('/admin/user', { uid: umUid, ...authChange });
+      loginEmail = r.email || null;
+    }
+    await updateDoc(doc(db, 'users', umUid), {
+      username: username || u.username || '', contactEmail: $('um-contact-email').value.trim(), facebook: $('um-facebook').value.trim(),
+      ...(ADMIN ? { role: newRole, status, perms, ...(loginEmail ? { email: loginEmail } : {}) } : {}), adminUpdatedAt: serverTimestamp()
+    });
+    $('um-password').value = '';
+    triggerToast(Object.keys(authChange).length && !workerUrl() ? 'บันทึกข้อมูลแล้ว (การล็อกอินยังไม่เปลี่ยน เพราะยังไม่ได้ตั้ง Worker)' : 'บันทึกข้อมูลผู้ใช้แล้ว', 'success');
+  } catch (err) { console.warn(err); triggerToast(err.message || 'บันทึกไม่สำเร็จ', 'error'); }
+  finally { btn.disabled = false; }
+}
+async function saveUserWallet(e) {
+  e.preventDefault();
+  const mode = document.querySelector('input[name="um-wmode"]:checked').value;
+  const amt = Math.round(num($('um-amount').value) * 100) / 100;
+  const note = $('um-wnote').value.trim();
+  if (!(amt >= 0) || (mode !== 'set' && !(amt > 0))) return triggerToast('กรุณาใส่จำนวนเงิน', 'error');
+  const btn = $('um-wsave'); btn.disabled = true;
+  try {
+    const after = await runTransaction(db, async (txn) => {
+      const ref = doc(db, 'users', umUid);
+      const s = await txn.get(ref);
+      const before = num(s.exists() ? s.data().walletBalance : 0);
+      const next = Math.round((mode === 'set' ? amt : mode === 'add' ? before + amt : before - amt) * 100) / 100;
+      if (next < 0) throw new Error('NEG');
+      txn.set(ref, { walletBalance: next }, { merge: true });
+      txn.set(doc(collection(db, 'wallet_logs')), { uid: umUid, before, after: next, delta: Math.round((next - before) * 100) / 100, note, by: me?.uid || '', at: serverTimestamp() });
+      return next;
+    });
+    $('um-balance').textContent = `฿${money(after)}`;
+    $('um-amount').value = ''; $('um-wnote').value = '';
+    triggerToast(`ปรับยอดเงินแล้ว (คงเหลือ ฿${money(after)})`, 'success');
+    loadWalletLogs();
+  } catch (err) { triggerToast(err.message === 'NEG' ? 'ยอดเงินติดลบไม่ได้' : 'ปรับยอดไม่สำเร็จ', 'error'); }
+  finally { btn.disabled = false; }
+}
+async function loadWalletLogs() {
+  const box = $('um-wallet-logs'); box.innerHTML = '<p class="py-3 text-slate">กำลังโหลด…</p>';
+  try {
+    const logs = (await getDocs(query(collection(db, 'wallet_logs'), where('uid', '==', umUid)))).docs.map(d => d.data()).sort((a, b) => tsMs(b.at) - tsMs(a.at)).slice(0, 20);
+    box.innerHTML = logs.length ? logs.map(l => `<div class="py-2 flex justify-between gap-3"><span class="text-slate">${adminEsc(fmtDate(l.at))} · ${adminEsc(l.note || '-')}</span><span class="font-mono font-semibold ${num(l.delta) < 0 ? 'text-launchOrange' : 'text-emerald-600'}">${num(l.delta) >= 0 ? '+' : ''}${money(l.delta)}</span></div>`).join('') : '<p class="py-3 text-slate">ยังไม่มีประวัติ</p>';
+  } catch (e) { box.innerHTML = '<p class="py-3 text-slate">โหลดไม่สำเร็จ</p>'; }
+}
+function loadUserHistory() {
+  const t = TOPUPS.filter(x => x.uid === umUid), o = ORDERS.filter(x => x.userId === umUid);
+  $('um-topups').innerHTML = t.length ? t.map(x => `<div class="py-2 flex justify-between gap-3"><span>${adminEsc(fmtDate(x.createdAt))} · ${x.paymentMethod === 'angpao' ? 'ซองอั่งเปา (อัตโนมัติ)' : x.paymentMethod === 'truemoney' ? 'TrueMoney' : 'พร้อมเพย์'}</span><span class="font-mono">฿${money(x.amount)} · ${(TOPUP_UI[x.status] || [x.status])[0]}</span></div>`).join('') : '<p class="py-2 text-slate">ไม่มีรายการ</p>';
+  $('um-orders').innerHTML = o.length ? o.map(x => `<div class="py-2 flex justify-between gap-3"><span class="min-w-0 truncate">${adminEsc(fmtDate(x.createdAt))} · ${adminEsc(x.productName)} ×${adminEsc(x.quantity || 1)}</span><span class="font-mono whitespace-nowrap">฿${money(x.amount)} · ${(ORDER_UI[x.status] || [x.status])[0]}</span></div>`).join('') : '<p class="py-2 text-slate">ไม่มีรายการ</p>';
+}
+
+// ==========================================
+// SETTINGS
+// ==========================================
 async function loadAdminSettings() {
-  try {
-    let data = null;
-    try {
-      const sDoc = await getDoc(doc(db, 'system', 'settings'));
-      if (sDoc.exists()) {
-        data = sDoc.data();
-      }
-    } catch (e) {
-      console.warn("Load settings remote fallback:", e);
-    }
-
-    if (!data) {
-      const local = localStorage.getItem('tactical_store_settings');
-      if (local) {
-        try { data = JSON.parse(local); } catch (_) {}
-      }
-    }
-
-    if (!data) data = {};
-
-    // Provider keys live in an admin-only document, never in the public system/settings.
-    let secrets = {};
-    try {
-      const secSnap = await getDoc(doc(db, 'system_private', 'secrets'));
-      if (secSnap.exists()) secrets = secSnap.data();
-    } catch (e) {
-      console.warn('Load secrets skipped:', e);
-    }
-    data = { ...data, ...secrets };
-
-    const setVal = (id, val) => {
-      const el = document.getElementById(id);
-      if (el && val !== undefined && val !== null) el.value = val;
-    };
-
-    setVal('setting-marquee-text', data.marqueeText);
-    setVal('setting-ribbon-text', data.ribbonText);
-    setVal('setting-ribbon-link-text', data.ribbonLinkText);
-    setVal('setting-ribbon-link-url', data.ribbonLinkUrl);
-    setVal('setting-stat1-val', data.stat1Val);
-    setVal('setting-stat1-lbl', data.stat1Lbl);
-    setVal('setting-stat2-val', data.stat2Val);
-    setVal('setting-stat2-lbl', data.stat2Lbl);
-    setVal('setting-stat3-val', data.stat3Val);
-    setVal('setting-stat3-lbl', data.stat3Lbl);
-    setVal('setting-stat4-val', data.stat4Val);
-    setVal('setting-stat4-lbl', data.stat4Lbl);
-    setVal('setting-discord-link', data.discordLink);
-    setVal('setting-line-id', data.lineId);
-    setVal('setting-slipok-key', data.slipokKey);
-    setVal('setting-slipok-branch', data.slipokBranch);
-    setVal('setting-truemoney-key', data.truemoneyKey);
-    setVal('setting-promptpay-no', data.promptpayNo);
-    setVal('setting-promptpay-qr-url', data.promptpayQrUrl);
-    setVal('setting-promptpay-name', data.promptpayName);
-
-  } catch (e) {
-    console.warn("Load settings error:", e);
-  }
+  const d = SETTINGS;
+  let secrets = {};
+  try { const s = await getDoc(doc(db, 'system_private', 'secrets')); if (s.exists()) secrets = s.data(); } catch (_) {}
+  const set = (id, v) => { const el = $(id); if (el) el.value = v ?? ''; };
+  $('setting-announce-on').checked = d.announcementEnabled === true;
+  set('setting-announce-text', d.announcementText ?? d.marqueeText);
+  set('setting-announce-link', d.announcementLink);
+  $('setting-popup-on').checked = d.popupEnabled === true;
+  set('setting-popup-images', (d.popupImages || []).join('\n'));
+  set('setting-vault-packages', (d.vaultPackages || []).map(p => `${p.days}=${p.price}`).join('\n'));
+  set('setting-vault-trial', d.vaultTrialDays || 0);
+  set('setting-contact-line', d.contactLine ?? d.lineId);
+  set('setting-contact-facebook', d.contactFacebook);
+  set('setting-contact-discord', d.contactDiscord ?? d.discordLink);
+  set('setting-base-users', d.baseStats?.users); set('setting-base-sales', d.baseStats?.sales); set('setting-base-orders', d.baseStats?.orders);
+  set('setting-promptpay-name', d.promptpayName); set('setting-promptpay-number', d.promptpayNumber ?? secrets.promptpayNo);
+  set('setting-promptpay-qr-url', d.promptpayQrUrl);
+  set('setting-slip-worker-url', d.slipWorkerUrl);
+  $('setting-slip-auto').checked = d.slipAutoVerify === true;
+  set('setting-discord-webhook', secrets.discordWebhook);
+  set('setting-koen-label', d.koenLabel);
+  renderStatHints();
 }
-
-async function handleSaveSettings(event) {
-  event.preventDefault();
-
-  const getVal = (id) => (document.getElementById(id)?.value || '').trim();
-
-  // Only storefront-safe fields go to the public system/settings document.
+function renderStatHints() {
+  const b = SETTINGS.baseStats || {};
+  const hint = (id, key, fmt = (x) => Math.round(x).toLocaleString('th-TH')) => { const el = $(id); if (el) el.textContent = `จริงในระบบ ${fmt(num(STATS[key]))} · หน้าเว็บแสดง ${fmt(num(b[key]) + num(STATS[key]))}`; };
+  hint('stat-actual-users', 'users'); hint('stat-actual-sales', 'sales', (x) => money(x, 0)); hint('stat-actual-orders', 'orders');
+}
+async function handleSaveSettings(e) {
+  e.preventDefault();
+  const v = (id) => ($(id)?.value || '').trim();
+  const webhook = v('setting-discord-webhook');
+  if (webhook && !/^https:\/\/(discord(app)?\.com)\/api\/webhooks\//.test(webhook)) return triggerToast('Discord Webhook URL ไม่ถูกต้อง', 'error');
+  const n = (id) => Math.max(0, Math.floor(num(v(id))));
   const payload = {
-    marqueeText: getVal('setting-marquee-text'),
-    ribbonText: getVal('setting-ribbon-text'),
-    ribbonLinkText: getVal('setting-ribbon-link-text'),
-    ribbonLinkUrl: getVal('setting-ribbon-link-url'),
-    stat1Val: getVal('setting-stat1-val'),
-    stat1Lbl: getVal('setting-stat1-lbl'),
-    stat2Val: getVal('setting-stat2-val'),
-    stat2Lbl: getVal('setting-stat2-lbl'),
-    stat3Val: getVal('setting-stat3-val'),
-    stat3Lbl: getVal('setting-stat3-lbl'),
-    stat4Val: getVal('setting-stat4-val'),
-    stat4Lbl: getVal('setting-stat4-lbl'),
-    discordLink: getVal('setting-discord-link'),
-    lineId: getVal('setting-line-id'),
-    promptpayQrUrl: getVal('setting-promptpay-qr-url'),
-    promptpayName: getVal('setting-promptpay-name'),
+    announcementEnabled: $('setting-announce-on').checked, announcementText: v('setting-announce-text'), announcementLink: v('setting-announce-link'),
+    popupEnabled: $('setting-popup-on').checked, popupImages: v('setting-popup-images').split('\n').map(x => formatUrl(x.trim())).filter(Boolean).slice(0, 6),
+    vaultPackages: v('setting-vault-packages').split('\n').map(l => l.split('=').map(x => Math.round(num(x)))).filter(([d, p]) => d >= 1 && d <= 365 && p > 0).slice(0, 4).map(([days, price]) => ({ days, price })),
+    vaultTrialDays: Math.min(365, n('setting-vault-trial')),
+    contactLine: v('setting-contact-line'), contactFacebook: formatUrl(v('setting-contact-facebook')), contactDiscord: formatUrl(v('setting-contact-discord')),
+    baseStats: { users: n('setting-base-users'), sales: n('setting-base-sales'), orders: n('setting-base-orders') },
+    promptpayName: v('setting-promptpay-name'), promptpayNumber: v('setting-promptpay-number'), promptpayQrUrl: formatUrl(v('setting-promptpay-qr-url')),
+    slipWorkerUrl: formatUrl(v('setting-slip-worker-url')), slipAutoVerify: $('setting-slip-auto').checked, koenLabel: v('setting-koen-label'),
+    lineId: deleteField(), discordLink: deleteField(), marqueeText: deleteField(), ribbonText: deleteField(), ribbonLinkText: deleteField(), ribbonLinkUrl: deleteField(),
     updatedAt: serverTimestamp()
   };
-  const secrets = {
-    slipokKey: getVal('setting-slipok-key'),
-    slipokBranch: getVal('setting-slipok-branch'),
-    truemoneyKey: getVal('setting-truemoney-key'),
-    promptpayNo: getVal('setting-promptpay-no'),
-    updatedAt: serverTimestamp()
-  };
-
   try {
     await setDoc(doc(db, 'system', 'settings'), payload, { merge: true });
-    await setDoc(doc(db, 'system_private', 'secrets'), secrets, { merge: true });
-    triggerToast('บันทึกการตั้งค่าร้านค้าสำเร็จ');
-  } catch (e) {
-    console.warn('Save settings failed:', e);
-    triggerToast('บันทึกไม่สำเร็จ ตรวจสอบสิทธิ์แอดมิน');
-  }
+    await setDoc(doc(db, 'system_private', 'secrets'), { discordWebhook: webhook, updatedAt: serverTimestamp() }, { merge: true });
+    triggerToast('บันทึกการตั้งค่าแล้ว', 'success');
+  } catch (err) { console.warn(err); triggerToast('บันทึกไม่สำเร็จ', 'error'); }
 }
-
-const TOPUP_STATUS_UI = {
-  pending: ['รอตรวจสอบ', 'text-launchOrange'],
-  completed: ['เติมแล้ว', 'text-appleBlue'],
-  rejected: ['ไม่อนุมัติ', 'text-slate']
-};
-
-async function renderAdminTopups() {
-  const tbody = document.getElementById('admin-topups-table-body');
-  const emptyEl = document.getElementById('admin-topups-empty');
-  if (!tbody) return;
-
-  let topups = [];
+async function uploadQr() {
+  const file = $('qr-file').files?.[0];
+  if (!file) return triggerToast('กรุณาเลือกรูป QR', 'error');
+  const btn = $('btn-upload-qr'); btn.disabled = true;
   try {
-    const snap = await getDocs(collection(db, 'topup_transactions'));
-    snap.forEach(d => topups.push({ id: d.id, ...d.data() }));
-  } catch (e) {
-    console.warn('Load topups failed:', e);
-    triggerToast('โหลดรายการเติมเงินไม่สำเร็จ (ต้องเข้าสู่ระบบด้วยบัญชีแอดมิน)');
-  }
-  topups.sort((a, b) => (tsToDate(b.createdAt)?.getTime() || 0) - (tsToDate(a.createdAt)?.getTime() || 0));
-
-  if (topups.length === 0) {
-    tbody.innerHTML = '';
-    if (emptyEl) emptyEl.classList.remove('hidden');
-    return;
-  }
-  if (emptyEl) emptyEl.classList.add('hidden');
-
-  tbody.innerHTML = topups.map(t => {
-    const [label, cls] = TOPUP_STATUS_UI[t.status] || [t.status || '-', 'text-slate'];
-    const idArg = adminEsc(JSON.stringify(t.id));
-    const actions = t.status === 'pending' ? `
-        <button type="button" onclick="approveTopup(${idArg})" class="apple-pricing-pill px-3 py-1 text-[11px]">ยืนยัน &amp; เติมเครดิต</button>
-        <button type="button" onclick="rejectTopup(${idArg})" class="apple-explore-pill px-3 py-1 text-[11px] ml-1">ไม่อนุมัติ</button>` : '';
-    return `
-    <tr class="hover:bg-mist/70 transition-colors border-b border-hairline">
-      <td class="py-3 px-4 font-mono font-bold text-xs text-ink">${adminEsc(t.txnId || t.id)}</td>
-      <td class="py-3 px-4 text-xs font-mono text-slate">${adminEsc(t.email || t.uid || '-')}</td>
-      <td class="py-3 px-4 text-xs font-medium text-ink">${t.paymentMethod === 'truemoney' ? 'TrueMoney' : 'พร้อมเพย์'}</td>
-      <td class="py-3 px-4 text-xs font-mono font-semibold text-ink">฿${Number(t.amount || 0).toFixed(2)}</td>
-      <td class="py-3 px-4 text-xs font-mono font-semibold text-ink">+${Number(t.finalCredit || t.amount || 0).toFixed(2)}</td>
-      <td class="py-3 px-4 text-xs font-mono text-slate break-all select-all max-w-[220px]">${adminEsc(t.proofRef || '-')}</td>
-      <td class="py-3 px-4 text-xs font-semibold ${cls}">${adminEsc(label)}</td>
-      <td class="py-3 px-4 whitespace-nowrap">${actions}</td>
-    </tr>`;
-  }).join('');
+    const image = await compressImage(file, 900, 0.9, 700000);
+    await setDoc(doc(db, 'system', 'promptpay_qr'), { image, updatedAt: serverTimestamp() });
+    $('qr-file').value = '';
+    triggerToast('อัปโหลด QR แล้ว', 'success');
+  } catch (err) { triggerToast(err.message || 'อัปโหลดไม่สำเร็จ', 'error'); }
+  finally { btn.disabled = false; }
+}
+async function removeQr() {
+  if (!confirm('ลบรูป QR ที่อัปโหลด? (ถ้ามีลิงก์รูป QR ระบบจะใช้ลิงก์แทน)')) return;
+  try { await deleteDoc(doc(db, 'system', 'promptpay_qr')); triggerToast('ลบ QR แล้ว', 'success'); } catch (e) { triggerToast('ลบไม่สำเร็จ', 'error'); }
+}
+async function testWebhook() {
+  try { await callWorker('/notify', { kind: 'test' }); triggerToast('ส่งข้อความทดสอบแล้ว ตรวจใน Discord', 'success'); }
+  catch (e) { triggerToast(e.message, 'error'); }
 }
 
-// Credits the wallet only after the admin has checked the money really arrived. One transaction
-// flips the request and adds the credit, so a double click cannot pay twice.
-async function approveTopup(txnId) {
-  if (!confirm('ยืนยันว่าได้รับเงินแล้ว และต้องการเติมเครดิตให้ผู้ใช้?')) return;
-  try {
-    const tRef = doc(db, 'topup_transactions', txnId);
-    await runTransaction(db, async (txn) => {
-      const tSnap = await txn.get(tRef);
-      if (!tSnap.exists() || tSnap.data().status !== 'pending') throw new Error('NOT_PENDING');
-      const t = tSnap.data();
-      const uRef = doc(db, 'users', t.uid);
-      const uSnap = await txn.get(uRef);
-      const prev = uSnap.exists() ? (parseFloat(uSnap.data().walletBalance) || 0) : 0;
-      txn.set(uRef, { walletBalance: prev + (Number(t.finalCredit) || Number(t.amount) || 0), lastTopupAt: serverTimestamp() }, { merge: true });
-      txn.update(tRef, { status: 'completed', completedAt: serverTimestamp() });
-    });
-    triggerToast('เติมเครดิตเรียบร้อย');
-  } catch (e) {
-    console.warn('Approve topup failed:', e);
-    triggerToast(e.message === 'NOT_PENDING' ? 'รายการนี้ถูกดำเนินการไปแล้ว' : 'เติมเครดิตไม่สำเร็จ ตรวจสอบสิทธิ์แอดมิน');
-  }
-  renderAdminTopups();
-}
-
-async function rejectTopup(txnId) {
-  if (!confirm('ยืนยันไม่อนุมัติรายการนี้?')) return;
-  try {
-    await updateDoc(doc(db, 'topup_transactions', txnId), { status: 'rejected', completedAt: serverTimestamp() });
-    triggerToast('ไม่อนุมัติรายการแล้ว');
-  } catch (e) {
-    console.warn('Reject topup failed:', e);
-    triggerToast('ดำเนินการไม่สำเร็จ ตรวจสอบสิทธิ์แอดมิน');
-  }
-  renderAdminTopups();
-}
-
-function switchAdminTab(tabName) {
-  const tabs = ['products', 'orders', 'promos', 'topups', 'settings'];
-  tabs.forEach(t => {
-    const sec = document.getElementById(`admin-sec-${t}`);
-    const btn = document.getElementById(`admin-tab-btn-${t}`);
-    if (sec) sec.classList.toggle('hidden', t !== tabName);
-    if (btn) {
-      if (t === tabName) {
-        btn.className = 'px-4 py-1.5 rounded-button text-xs font-normal transition-all bg-ink text-gallery flex items-center gap-2 shrink-0';
-      } else {
-        btn.className = 'px-4 py-1.5 rounded-button text-xs font-normal transition-all text-slate hover:text-ink flex items-center gap-2 shrink-0';
-      }
-    }
-  });
-
-  if (tabName === 'promos') {
-    if (typeof window.renderAdminPromos === 'function') {
-      window.renderAdminPromos();
-    }
-  } else if (tabName === 'topups') {
-    if (typeof window.renderAdminTopups === 'function') {
-      window.renderAdminTopups();
-    }
-  }
-}
-
-// ==========================================
-// 8. STOREFRONT: CATALOG & GALLERY & CHECKOUT
-// ==========================================
-function initAuthListener() {
-  onAuthStateChanged(auth, (user) => {
-    currentUser = user;
-    const loggedOutContainer = document.getElementById('auth-logged-out');
-    const loggedInContainer = document.getElementById('auth-logged-in');
-    const displayNameEl = document.getElementById('user-display-name');
-    const avatarInitialEl = document.getElementById('user-avatar-initial');
-    const mobileAuthText = document.getElementById('mobile-nav-auth-text');
-
-    if (user) {
-      const name = user.displayName || user.email.split('@')[0];
-      if (loggedOutContainer) loggedOutContainer.classList.add('hidden');
-      if (loggedInContainer) {
-        loggedInContainer.classList.remove('hidden');
-        loggedInContainer.classList.add('flex');
-      }
-      if (displayNameEl) displayNameEl.innerText = name;
-      if (avatarInitialEl) avatarInitialEl.innerText = name.charAt(0).toUpperCase();
-      if (mobileAuthText) mobileAuthText.innerText = name.slice(0, 5) + '...';
-      updateMyOrdersBadge();
-    } else {
-      if (loggedOutContainer) loggedOutContainer.classList.remove('hidden');
-      if (loggedInContainer) {
-        loggedInContainer.classList.add('hidden');
-        loggedInContainer.classList.remove('flex');
-      }
-      if (mobileAuthText) mobileAuthText.innerText = 'บัญชี';
-    }
-  });
-}
-
-async function handleSignOut() {
-  try {
-    await signOut(auth);
-    triggerToast('ออกจากระบบเรียบร้อยแล้ว');
-  } catch (error) {
-    triggerToast('เกิดข้อผิดพลาดในการออกจากระบบ');
-  }
-}
-
-function updateHeroMetrics() {
-  const inStockTotal = PRODUCTS.reduce((sum, p) => sum + (Number(p.stock) || 0), 0);
-  const el = document.getElementById('hero-instock-count');
-  if (el) el.innerText = inStockTotal > 0 ? inStockTotal.toLocaleString() : '1,405';
-}
-
-function renderCategoryTabs() {
-  const tabsContainer = document.getElementById('category-tabs');
-  if (!tabsContainer) return;
-
-  tabsContainer.innerHTML = CATEGORIES.map(cat => {
-    const isActive = cat.id === currentCategory;
-    const btnClass = isActive 
-      ? 'bg-amber-500 text-black shadow-[0_0_15px_rgba(245,158,11,0.3)]' 
-      : 'bg-zinc-900 text-zinc-400 hover:bg-zinc-800 hover:text-white border border-white/5';
-    return `
-      <button onclick="filterCategory('${cat.id}')" class="px-5 py-2.5 rounded-full text-xs font-bold transition-all duration-300 ${btnClass}">
-        ${cat.name}
-      </button>
-    `;
-  }).join('');
-}
-
-function filterCategory(catId) {
-  currentCategory = catId;
-  renderCategoryTabs();
-  renderProducts();
-}
-
-function handleSearch(val) {
-  searchQuery = val;
-  renderProducts();
-}
-
-function setStockFilter(mode) {
-  stockFilter = mode;
-  const btnAll = document.getElementById('filter-stock-all');
-  const btnIn = document.getElementById('filter-stock-instock');
-  if (btnAll && btnIn) {
-    if (mode === 'all') {
-      btnAll.className = 'px-3.5 py-1.5 rounded-xl font-bold transition-all bg-amber-500 text-black';
-      btnIn.className = 'px-3.5 py-1.5 rounded-xl font-bold transition-all text-zinc-400 hover:text-white';
-    } else {
-      btnIn.className = 'px-3.5 py-1.5 rounded-xl font-bold transition-all bg-amber-500 text-black';
-      btnAll.className = 'px-3.5 py-1.5 rounded-xl font-bold transition-all text-zinc-400 hover:text-white';
-    }
-  }
-  renderProducts();
-}
-
-function handleSortChange(val) {
-  sortOrder = val;
-  renderProducts();
-}
-
-function clearSearchAndFilters() {
-  currentCategory = 'all';
-  searchQuery = '';
-  stockFilter = 'all';
-  sortOrder = 'default';
-  
-  const searchInput = document.getElementById('search-input');
-  if (searchInput) searchInput.value = '';
-  const sortSelect = document.getElementById('sort-select');
-  if (sortSelect) sortSelect.value = 'default';
-
-  setStockFilter('all');
-  renderCategoryTabs();
-  renderProducts();
-}
-
-function scrollToCatalog() {
-  const el = document.getElementById('catalog-section');
-  if (el) el.scrollIntoView({ behavior: 'smooth' });
-}
-
-function renderProducts() {
-  const grid = document.getElementById('product-grid');
-  const emptyState = document.getElementById('empty-state');
-  if (!grid || !emptyState) return;
-
-  let filtered = PRODUCTS.filter(p => {
-    const matchCat = currentCategory === 'all' || p.category === currentCategory;
-    const matchSearch = p.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                        p.tags.some(t => t.toLowerCase().includes(searchQuery.toLowerCase()));
-    const matchStock = stockFilter === 'all' || (stockFilter === 'instock' && Number(p.stock) > 0);
-    return matchCat && matchSearch && matchStock;
-  });
-
-  if (sortOrder === 'price-asc') filtered.sort((a, b) => a.price - b.price);
-  else if (sortOrder === 'price-desc') filtered.sort((a, b) => b.price - a.price);
-  else if (sortOrder === 'stock-desc') filtered.sort((a, b) => b.stock - a.stock);
-
-  if (filtered.length === 0) {
-    grid.innerHTML = '';
-    emptyState.classList.remove('hidden');
-    emptyState.classList.add('flex');
-    return;
-  }
-
-  emptyState.classList.add('hidden');
-  emptyState.classList.remove('flex');
-
-  grid.innerHTML = filtered.map(product => {
-    const isOutOfStock = Number(product.stock) === 0;
-    const borderClass = isOutOfStock 
-      ? 'border-red-950/30 opacity-70' 
-      : 'border-white/10 hover:border-amber-500/60 hover:shadow-[0_0_30px_rgba(245,158,11,0.15)]';
-
-    return `
-      <div class="group relative rounded-3xl overflow-hidden bg-zinc-950 border flex flex-col h-full transition-all duration-300 ${borderClass}">
-        <div onclick="openDetailModal('${product.id}')" class="relative aspect-[16/10] overflow-hidden bg-zinc-900 cursor-pointer">
-          <img 
-            src="${product.image}" 
-            alt="${product.name}" 
-            class="w-full h-full object-cover transition-transform duration-700 ${!isOutOfStock ? 'group-hover:scale-105' : 'grayscale'}"
-            onerror="this.onerror=null;this.src='https://placehold.co/800x500/18181b/f59e0b?text=Arena+Breakout'"
-          />
-          <div class="absolute inset-0 bg-gradient-to-t from-zinc-950 via-transparent to-transparent z-10"></div>
-          
-          <div class="absolute top-3 left-3 z-20 flex flex-wrap gap-1.5">
-            ${isOutOfStock ? `
-              <span class="bg-red-500 text-white text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider">
-                สินค้าหมด
-              </span>
-            ` : `
-              <span class="bg-emerald-500/90 text-black text-[10px] font-bold px-2.5 py-0.5 rounded-full uppercase tracking-wider flex items-center gap-1">
-                <span class="w-1.5 h-1.5 bg-black rounded-full animate-ping"></span>
-                คงเหลือ ${product.stock}
-              </span>
-            `}
-            ${product.tags.map(t => `
-              <span class="bg-black/70 backdrop-blur-md text-amber-400 border border-amber-500/30 text-[10px] font-bold px-2 py-0.5 rounded-full">
-                ${t}
-              </span>
-            `).join('')}
-          </div>
-        </div>
-
-        <div class="p-5 flex flex-col flex-grow z-20">
-          <h3 onclick="openDetailModal('${product.id}')" class="text-base font-bold text-white mb-1.5 line-clamp-1 group-hover:text-amber-400 transition-colors cursor-pointer">
-            ${product.name}
-          </h3>
-          
-          <p class="text-zinc-500 text-xs line-clamp-2 mb-4 leading-relaxed">
-            ${product.desc}
-          </p>
-
-          <div class="mb-4">
-            <div class="inline-flex items-center gap-2 bg-zinc-900 px-3 py-1 rounded-xl border border-white/5">
-              <span class="text-[10px] uppercase font-bold text-zinc-500">มูลค่า Koen</span>
-              <span class="font-heading text-xs text-amber-500 font-bold">${product.koen}</span>
-            </div>
-          </div>
-
-          <div class="mt-auto flex items-center justify-between pt-3 border-t border-white/5">
-            <div class="flex flex-col">
-              <span class="text-[10px] text-zinc-500 font-bold uppercase tracking-wider">ราคา</span>
-              <span class="text-lg font-heading font-black text-white">
-                ฿${Number(product.price).toFixed(2)}
-              </span>
-            </div>
-            
-            <div class="flex items-center gap-2">
-              <button onclick="openDetailModal('${product.id}')" class="text-xs text-zinc-400 hover:text-white px-2.5 py-2 rounded-xl hover:bg-zinc-900 transition-colors">
-                รายละเอียด
-              </button>
-              <button 
-                onclick="startCheckout('${product.id}')" 
-                ${isOutOfStock ? 'disabled' : ''} 
-                class="flex items-center gap-1.5 px-4 py-2 rounded-xl text-xs font-bold transition-all duration-300 ${
-                  isOutOfStock 
-                  ? 'bg-zinc-900 text-zinc-600 cursor-not-allowed' 
-                  : 'bg-amber-500 text-black hover:bg-white hover:scale-105 active:scale-95 shadow-md'
-                }">
-                <svg class="w-3.5 h-3.5 fill-current" viewBox="0 0 24 24"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
-                <span>ซื้อทันที</span>
-              </button>
-            </div>
-          </div>
-        </div>
-      </div>
-    `;
-  }).join('');
-}
-
-function openDetailModal(productId) {
-  const p = PRODUCTS.find(item => item.id === productId);
-  if (!p) return;
-
-  currentModalGallery = Array.isArray(p.gallery) && p.gallery.length > 0 ? p.gallery : [p.image];
-  currentGalleryIdx = 0;
-
-  document.getElementById('modal-img').src = currentModalGallery[0];
-  document.getElementById('modal-title').innerText = p.name;
-  document.getElementById('modal-koen').innerText = `Koen Value: ${p.koen}`;
-  document.getElementById('modal-desc').innerText = p.desc;
-  document.getElementById('modal-price').innerText = `฿${Number(p.price).toFixed(2)}`;
-
-  const stockBadge = document.getElementById('modal-stock-badge');
-  if (Number(p.stock) === 0) {
-    stockBadge.innerText = 'สินค้าหมด';
-    stockBadge.className = 'inline-block bg-red-500/10 text-red-400 text-xs font-bold px-3 py-1 rounded-full border border-red-500/20';
-  } else {
-    stockBadge.innerText = `พร้อมส่ง (เหลือ ${p.stock})`;
-    stockBadge.className = 'inline-block bg-emerald-500/10 text-emerald-400 text-xs font-bold px-3 py-1 rounded-full border border-emerald-500/20';
-  }
-
-  renderGalleryThumbnails();
-
-  const specsContainer = document.getElementById('modal-specs');
-  if (specsContainer) {
-    specsContainer.innerHTML = p.specs.map(item => `
-      <div class="flex items-center gap-2">
-        <span class="text-amber-500 font-bold">✓</span>
-        <span>${item}</span>
-      </div>
-    `).join('');
-  }
-
-  const buyBtn = document.getElementById('modal-buy-btn');
-  if (Number(p.stock) === 0) {
-    buyBtn.innerText = 'สินค้าหมด';
-    buyBtn.disabled = true;
-    buyBtn.className = 'px-6 py-3 rounded-full font-bold text-xs uppercase bg-zinc-800 text-zinc-600 cursor-not-allowed';
-  } else {
-    buyBtn.innerText = 'สั่งซื้อทันที';
-    buyBtn.disabled = false;
-    buyBtn.className = 'px-6 py-3 rounded-full font-bold text-xs uppercase bg-amber-500 hover:bg-white text-black shadow-lg hover:scale-105 active:scale-95 font-heading';
-    buyBtn.onclick = () => {
-      closeDetailModal();
-      startCheckout(p.id);
-    };
-  }
-
-  const modal = document.getElementById('product-detail-modal');
-  modal.classList.remove('hidden');
-  modal.classList.add('flex');
-}
-
-function renderGalleryThumbnails() {
-  const strip = document.getElementById('modal-gallery-strip');
-  const counter = document.getElementById('modal-img-counter');
-  if (!strip) return;
-
-  if (currentModalGallery.length <= 1) {
-    strip.innerHTML = '';
-    strip.classList.add('hidden');
-    if (counter) counter.innerText = 'ภาพ 1 / 1';
-    return;
-  }
-
-  strip.classList.remove('hidden');
-  if (counter) counter.innerText = `ภาพ ${currentGalleryIdx + 1} / ${currentModalGallery.length}`;
-
-  strip.innerHTML = currentModalGallery.map((imgUrl, idx) => `
-    <button type="button" onclick="switchGalleryImage(${idx})" class="w-16 h-12 rounded-xl overflow-hidden bg-zinc-900 border-2 border-white/10 shrink-0 gallery-thumb ${idx === currentGalleryIdx ? 'active' : ''}">
-      <img src="${imgUrl}" alt="Thumb" class="w-full h-full object-cover">
-    </button>
-  `).join('');
-}
-
-function switchGalleryImage(idx) {
-  if (idx < 0 || idx >= currentModalGallery.length) return;
-  currentGalleryIdx = idx;
-  const modalImg = document.getElementById('modal-img');
-  if (modalImg) modalImg.src = currentModalGallery[idx];
-  renderGalleryThumbnails();
-}
-
-function closeDetailModal() {
-  const modal = document.getElementById('product-detail-modal');
-  if (modal) {
-    modal.classList.add('hidden');
-    modal.classList.remove('flex');
-  }
-}
-
-// Checkout & Promo Logic
-function startCheckout(productId) {
-  selectedProduct = PRODUCTS.find(p => p.id === productId);
-  if (!selectedProduct || Number(selectedProduct.stock) === 0) return;
-
-  discountAmount = 0;
-  document.getElementById('promo-input').value = '';
-  document.getElementById('discount-row').classList.add('hidden');
-  document.getElementById('discount-row').classList.remove('flex');
-
-  document.getElementById('checkout-product-img').src = selectedProduct.image;
-  document.getElementById('checkout-product-name').innerText = selectedProduct.name;
-  document.getElementById('checkout-product-koen').innerText = `Koen: ${selectedProduct.koen}`;
-  document.getElementById('checkout-product-desc').innerText = selectedProduct.desc;
-  document.getElementById('checkout-base-price').innerText = `฿${Number(selectedProduct.price).toFixed(2)}`;
-  
-  updateCheckoutTotal();
-  switchPaymentTab('promptpay');
-  startTimer();
-  navigateTo('checkout');
-}
-
-function updateCheckoutTotal() {
-  if (!selectedProduct) return;
-  const finalPrice = Math.max(0, selectedProduct.price - discountAmount);
-  
-  document.getElementById('checkout-final-price').innerText = `฿${finalPrice.toFixed(2)}`;
-  document.getElementById('qr-amount-label').innerText = `฿${finalPrice.toFixed(2)}`;
-  document.getElementById('promptpay-sum-label').innerText = `฿${finalPrice.toFixed(2)}`;
-  document.getElementById('voucher-exact-amount').innerText = `฿${finalPrice.toFixed(2)}`;
-  document.getElementById('nav-cart-text').innerText = `฿${finalPrice.toFixed(2)}`;
-}
-
-function applyPromoCode() {
-  const now = Date.now();
-  if (now < promoLockoutExpiry) {
-    const secLeft = Math.ceil((promoLockoutExpiry - now) / 1000);
-    triggerToast(`โปรดรอ ${secLeft} วินาที ก่อนลองใส่โค้ดส่วนลดอีกครั้ง (Rate Limit)`);
-    return;
-  }
-
-  const input = document.getElementById('promo-input');
-  const code = input.value.trim().toUpperCase();
-  if (!selectedProduct) return;
-
-  if (code === 'TACTICAL') {
-    discountAmount = 50;
-    triggerToast('ใช้โค้ด TACTICAL สำเร็จ! ลดทันที 50 บาท');
-    promoFailedAttempts = 0;
-  } else if (code === 'ARENA10') {
-    discountAmount = Math.round(selectedProduct.price * 0.1);
-    triggerToast(`ใช้โค้ด ARENA10 สำเร็จ! ลด 10% (฿${discountAmount})`);
-    promoFailedAttempts = 0;
-  } else if (code === 'MOSZXLL') {
-    discountAmount = 100;
-    triggerToast('ใช้โค้ด MOSZXLL สำเร็จ! ลดทันที 100 บาท');
-    promoFailedAttempts = 0;
-  } else {
-    promoFailedAttempts++;
-    if (promoFailedAttempts >= 5) {
-      promoLockoutExpiry = Date.now() + 60000;
-      triggerToast('กรอกโค้ดผิดเกิน 5 ครั้ง ระบบล็อกการใช้งานโค้ด 60 วินาที');
-      document.getElementById('promo-rate-warning').classList.remove('hidden');
-      setTimeout(() => {
-        document.getElementById('promo-rate-warning').classList.add('hidden');
-        promoFailedAttempts = 0;
-      }, 60000);
-    } else {
-      triggerToast(`โค้ดไม่ถูกต้อง (เหลือโอกาสลองอีก ${5 - promoFailedAttempts} ครั้ง)`);
-    }
-    return;
-  }
-
-  document.getElementById('discount-row').classList.remove('hidden');
-  document.getElementById('discount-row').classList.add('flex');
-  document.getElementById('checkout-discount').innerText = `-฿${discountAmount.toFixed(2)}`;
-  updateCheckoutTotal();
-}
-
-function switchPaymentTab(tab) {
-  currentPaymentMethod = tab;
-  const pTab = document.getElementById('payment-promptpay-panel');
-  const vTab = document.getElementById('payment-truemoney-panel');
-  const btnP = document.getElementById('btn-tab-promptpay');
-  const btnV = document.getElementById('btn-tab-truemoney');
-
-  if (!pTab || !vTab || !btnP || !btnV) return;
-
-  if (tab === 'promptpay') {
-    pTab.classList.remove('hidden');
-    pTab.classList.add('flex');
-    vTab.classList.add('hidden');
-    vTab.classList.remove('flex');
-    btnP.className = 'flex-1 py-2 rounded-xl text-xs font-bold flex items-center justify-center gap-2 transition-all bg-amber-500 text-black shadow-md';
-    btnV.className = 'flex-1 py-2 rounded-xl text-xs font-bold flex items-center justify-center gap-2 transition-all text-zinc-400 hover:text-white';
-  } else {
-    vTab.classList.remove('hidden');
-    vTab.classList.add('flex');
-    pTab.classList.add('hidden');
-    pTab.classList.remove('flex');
-    btnV.className = 'flex-1 py-2 rounded-xl text-xs font-bold flex items-center justify-center gap-2 transition-all bg-amber-500 text-black shadow-md';
-    btnP.className = 'flex-1 py-2 rounded-xl text-xs font-bold flex items-center justify-center gap-2 transition-all text-zinc-400 hover:text-white';
-  }
-}
-
-function startTimer() {
-  stopTimer();
-  timerCountdown = 600;
-  updateTimerDisplay();
-  timerInterval = setInterval(() => {
-    timerCountdown--;
-    if (timerCountdown <= 0) {
-      stopTimer();
-      navigateTo('store');
-      triggerToast('หมดเวลาชำระเงิน ระบบได้คืนสต็อกสินค้าแล้ว');
-    } else {
-      updateTimerDisplay();
-    }
-  }, 1000);
-}
-
-function stopTimer() {
-  if (timerInterval) clearInterval(timerInterval);
-}
-
-function updateTimerDisplay() {
-  const m = Math.floor(timerCountdown / 60);
-  const s = timerCountdown % 60;
-  const formatted = `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
-  const el = document.getElementById('checkout-timer');
-  if (el) el.innerText = formatted;
-}
-
-async function simulateOrderSuccess() {
-  const btn = document.getElementById('btn-verify-promptpay');
-  if (btn) {
-    btn.innerText = 'กำลังตรวจสอบสลิปและจัดส่งไอดี...';
-    btn.disabled = true;
-  }
-
-  const orderNum = Math.floor(100000 + Math.random() * 900000);
-  const orderId = `ORD-AB${orderNum}`;
-  const finalPrice = selectedProduct ? Math.max(0, selectedProduct.price - discountAmount) : 0;
-  
-  currentDeliveredUsername = `ArenaAgent${Math.floor(1000 + Math.random() * 9000)}`;
-  currentDeliveredPassword = `Kamona#${Math.floor(100000 + Math.random() * 900000)}`;
-
-  const orderRecord = {
-    orderNumber: orderId,
-    productId: selectedProduct ? selectedProduct.id : 'unknown',
-    productName: selectedProduct ? selectedProduct.name : 'Unknown Product',
-    amount: finalPrice,
-    discount: discountAmount,
-    paymentMethod: currentPaymentMethod,
-    status: 'completed',
-    userEmail: currentUser ? currentUser.email : 'guest',
-    userId: currentUser ? currentUser.uid : null,
-    accountDelivered: {
-      username: currentDeliveredUsername,
-      password: currentDeliveredPassword
-    },
-    createdAt: new Date().toISOString()
-  };
-
-  saveOrderToLocal(orderRecord);
-
-  try {
-    await addDoc(collection(db, "orders"), {
-      ...orderRecord,
-      createdAt: serverTimestamp()
-    });
-  } catch (err) {
-    console.warn("Save order to Firestore error:", err);
-  }
-
-  setTimeout(() => {
-    if (btn) {
-      btn.innerText = 'ยืนยันการโอนเงิน (ตรวจสลิปอัตโนมัติ)';
-      btn.disabled = false;
-    }
-    
-    document.getElementById('success-product-name').innerText = selectedProduct ? selectedProduct.name : '';
-    document.getElementById('success-order-id').innerText = `ORDER ID: #${orderId}`;
-    isPasswordRevealed = false;
-    document.getElementById('acc-username').innerText = currentDeliveredUsername;
-    document.getElementById('acc-password').innerText = '••••••••••••••••';
-    document.getElementById('pw-toggle-label').innerText = 'แสดงรหัส';
-    
-    navigateTo('success');
-    triggerToast('ชำระเงินสำเร็จ บันทึกประวัติใน "ออเดอร์ของฉัน" เรียบร้อย');
-    updateMyOrdersBadge();
-  }, 1400);
-}
-
-function simulateVoucherPayment() {
-  const url = document.getElementById('voucher-url-input').value.trim();
-  if (!url.includes('truemoney.com') && url.length < 15) {
-    triggerToast('กรุณากรอกลิงก์ซองของขวัญ TrueMoney ให้ถูกต้อง');
-    return;
-  }
-
-  triggerToast('กำลังตรวจสอบยอดเงินในซองของขวัญ...');
-  setTimeout(() => {
-    document.getElementById('voucher-url-input').value = '';
-    simulateOrderSuccess();
-  }, 1200);
-}
-
-function togglePasswordVisibility() {
-  isPasswordRevealed = !isPasswordRevealed;
-  const pwText = document.getElementById('acc-password');
-  const toggleLabel = document.getElementById('pw-toggle-label');
-  
-  if (isPasswordRevealed) {
-    pwText.innerText = currentDeliveredPassword;
-    toggleLabel.innerText = 'ซ่อนรหัส';
-  } else {
-    pwText.innerText = '••••••••••••••••';
-    toggleLabel.innerText = 'แสดงรหัส';
-  }
-}
-
-function copyCredentials() {
-  const textToCopy = `User: ${currentDeliveredUsername}\nPass: ${currentDeliveredPassword}`;
-  try {
-    navigator.clipboard.writeText(textToCopy);
-  } catch (err) {
-    console.warn("Copy error:", err);
-  }
-
-  const copyLabel = document.getElementById('copy-btn-text');
-  if (copyLabel) {
-    copyLabel.innerText = 'คัดลอกข้อมูลเรียบร้อยแล้ว!';
-    triggerToast('คัดลอก Username & Password เรียบร้อยแล้ว!');
-    setTimeout(() => {
-      copyLabel.innerText = 'คัดลอก Username & Password ทั้งหมด';
-    }, 2500);
-  }
-}
-
-function getLocalOrders() {
-  try {
-    const raw = localStorage.getItem('tactical_my_orders');
-    return raw ? JSON.parse(raw) : [];
-  } catch {
-    return [];
-  }
-}
-
-function saveOrderToLocal(order) {
-  try {
-    const list = getLocalOrders();
-    list.unshift(order);
-    localStorage.setItem('tactical_my_orders', JSON.stringify(list));
-  } catch (err) {
-    console.warn("Local storage error:", err);
-  }
-}
-
-function updateMyOrdersBadge() {
-  const list = getLocalOrders();
-  const badge = document.getElementById('nav-order-badge');
-  if (badge) {
-    if (list.length > 0) {
-      badge.innerText = list.length;
-      badge.classList.remove('hidden');
-    } else {
-      badge.classList.add('hidden');
-    }
-  }
-}
-
-function openMyOrdersModal() {
-  const modal = document.getElementById('my-orders-modal');
-  const container = document.getElementById('my-orders-list');
-  const empty = document.getElementById('my-orders-empty');
-  if (!modal || !container) return;
-
-  const orders = getLocalOrders();
-
-  if (orders.length === 0) {
-    container.innerHTML = '';
-    empty.classList.remove('hidden');
-    empty.classList.add('flex');
-  } else {
-    empty.classList.add('hidden');
-    empty.classList.remove('flex');
-    container.innerHTML = orders.map((o, idx) => {
-      const acc = o.accountDelivered || {};
-      const timeStr = new Date(o.createdAt).toLocaleString('th-TH');
-
-      return `
-        <div class="glass-card p-4 sm:p-5 rounded-2xl border border-white/10 space-y-3">
-          <div class="flex justify-between items-start gap-2 border-b border-white/5 pb-2.5">
-            <div>
-              <span class="text-[10px] font-mono text-amber-500 font-bold">#${o.orderNumber}</span>
-              <h4 class="font-bold text-white text-sm">${o.productName}</h4>
-              <span class="text-[10px] text-zinc-500">${timeStr}</span>
-            </div>
-            <div class="text-right">
-              <span class="text-sm font-heading font-black text-amber-400">฿${Number(o.amount).toFixed(2)}</span>
-              <span class="block text-[10px] text-emerald-400 font-bold">✓ จัดส่งสำเร็จ</span>
-            </div>
-          </div>
-
-          <div class="bg-black/50 p-3 rounded-xl border border-white/5 font-mono text-xs space-y-1.5">
-            <div class="flex items-center justify-between">
-              <span class="text-zinc-500 text-[10px]">USERNAME:</span>
-              <span class="text-amber-400 font-bold select-all">${acc.username || 'ArenaAgent'}</span>
-            </div>
-            <div class="flex items-center justify-between">
-              <span class="text-zinc-500 text-[10px]">PASSWORD:</span>
-              <span id="order-pw-${idx}" class="text-zinc-300 font-bold select-all">••••••••••••</span>
-            </div>
-          </div>
-
-          <div class="flex items-center justify-end gap-2 pt-1">
-            <button onclick="toggleOrderPassword('${idx}', '${acc.password || ''}')" class="px-3 py-1.5 rounded-lg bg-zinc-900 hover:bg-zinc-800 text-[11px] font-bold text-zinc-300">
-              <span id="order-btn-lbl-${idx}">แสดงรหัส</span>
-            </button>
-            <button onclick="copySpecificCredentials('${acc.username}', '${acc.password}')" class="px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-[11px] font-bold text-black font-heading">
-              คัดลอกไอดี
-            </button>
-          </div>
-        </div>
-      `;
-    }).join('');
-  }
-
-  modal.classList.remove('hidden');
-  modal.classList.add('flex');
-}
-
-function closeMyOrdersModal() {
-  const modal = document.getElementById('my-orders-modal');
-  if (modal) {
-    modal.classList.add('hidden');
-    modal.classList.remove('flex');
-  }
-}
-
-function toggleOrderPassword(idx, realPw) {
-  const el = document.getElementById(`order-pw-${idx}`);
-  const lbl = document.getElementById(`order-btn-lbl-${idx}`);
-  if (!el || !lbl) return;
-
-  if (el.innerText.includes('•')) {
-    el.innerText = realPw || 'KamonaStrike#2026';
-    lbl.innerText = 'ซ่อนรหัส';
-  } else {
-    el.innerText = '••••••••••••';
-    lbl.innerText = 'แสดงรหัส';
-  }
-}
-
-function copySpecificCredentials(u, p) {
-  const text = `User: ${u}\nPass: ${p}`;
-  if (navigator.clipboard) navigator.clipboard.writeText(text);
-  triggerToast('คัดลอกข้อมูลไอดีนี้เรียบร้อยแล้ว!');
-}
-
-function navigateTo(viewName) {
-  const storeView = document.getElementById('view-store');
-  const checkoutView = document.getElementById('view-checkout');
-  const successView = document.getElementById('view-success');
-
-  if (storeView) storeView.classList.add('hidden');
-  if (checkoutView) checkoutView.classList.add('hidden');
-  if (successView) successView.classList.add('hidden');
-
-  if (viewName === 'store' && storeView) {
-    storeView.classList.remove('hidden');
-    stopTimer();
-  } else if (viewName === 'checkout' && checkoutView) {
-    checkoutView.classList.remove('hidden');
-  } else if (viewName === 'success' && successView) {
-    successView.classList.remove('hidden');
-    stopTimer();
-  }
-  window.scrollTo({ top: 0, behavior: 'smooth' });
-}
-
-// ==========================================
-// 9. WINDOW ATTACHMENTS & INITIALIZER
-// ==========================================
-// Storefront methods
-window.navigateTo = navigateTo;
-window.filterCategory = filterCategory;
-window.handleSearch = handleSearch;
-window.setStockFilter = setStockFilter;
-window.handleSortChange = handleSortChange;
-window.clearSearchAndFilters = clearSearchAndFilters;
-window.scrollToCatalog = scrollToCatalog;
-window.openDetailModal = openDetailModal;
-window.closeDetailModal = closeDetailModal;
-window.switchGalleryImage = switchGalleryImage;
-window.startCheckout = startCheckout;
-window.applyPromoCode = applyPromoCode;
-window.switchPaymentTab = switchPaymentTab;
-window.simulateOrderSuccess = simulateOrderSuccess;
-window.simulateVoucherPayment = simulateVoucherPayment;
-window.togglePasswordVisibility = togglePasswordVisibility;
-window.copyCredentials = copyCredentials;
-window.handleSignOut = handleSignOut;
-window.openMyOrdersModal = openMyOrdersModal;
-window.closeMyOrdersModal = closeMyOrdersModal;
-window.toggleOrderPassword = toggleOrderPassword;
-window.copySpecificCredentials = copySpecificCredentials;
-
-// Admin methods
-window.handlePinSetupSubmit = handlePinSetupSubmit;
-window.handlePinUnlockSubmit = handlePinUnlockSubmit;
-window.promptResetPin = promptResetPin;
-window.lockAdminSession = lockAdminSession;
-window.openStockModal = openStockModal;
-window.closeStockModal = closeStockModal;
-window.handleStockTextareaInput = handleStockTextareaInput;
-window.submitBulkStockImport = submitBulkStockImport;
-window.deleteSingleStockItem = deleteSingleStockItem;
-window.openProductModal = openProductModal;
-window.closeProductModal = closeProductModal;
-window.handleProductFormSubmit = handleProductFormSubmit;
-window.deleteAdminProduct = deleteAdminProduct;
-window.seedInitialProducts = seedInitialProducts;
-window.setImagePreset = setImagePreset;
-window.updateImagePreview = updateImagePreview;
-window.openStockModalQuick = openStockModalQuick;
-window.refreshOrders = refreshOrders;
-window.approveOrder = approveOrder;
-window.approveTopup = approveTopup;
-window.rejectTopup = rejectTopup;
-window.cancelOrder = cancelOrder;
-window.handleSaveSettings = handleSaveSettings;
-window.switchAdminTab = switchAdminTab;
-
-window.addEventListener('DOMContentLoaded', () => {
-  // สตรีมสินค้าสดจาก Firebase
-  initFirebaseProductsListener();
-
-  // ตรวจสอบว่ากำลังเปิดหน้า Admin หรือ Storefront
-  if (document.getElementById('admin-auth-gate')) {
-    checkSecurityPinState();
-  } else {
-    initAuthListener();
-    renderCategoryTabs();
-    renderProducts();
-    updateMyOrdersBadge();
-  }
+Object.assign(window, {
+  renderDashboard, applyTypeUi, setRentalFilter, closeRental, renderAdminRentals,
+  handlePinSetupSubmit, handlePinUnlockSubmit, promptResetPin, lockAdminSession, switchAdminTab,
+  openStockModal, closeStockModal, handleStockTextareaInput, submitBulkStockImport, deleteSingleStockItem, openStockModalQuick,
+  openProductModal, closeProductModal, handleProductFormSubmit, deleteAdminProduct, setProductType, setKoenLabelPreset, setImagePreset,
+  updateImagePreview, filterAdminProducts, toggleFeatured, handleCategoryChange, updateServiceSummary, syncServiceRateToPrice, setServiceUnitPreset,
+  applyServiceTemplate, editCategory, resetCategoryForm, toggleCategoryKind, handleCategorySubmit, deleteCategory,
+  renderAdminOrders, refreshOrders, approveOrder, startWork, finishServiceOrder, cancelOrder, clearGamePassword, openNote, saveOrderNote, viewSlip,
+  renderAdminTopups, approveTopup, rejectTopup, saveTopupPromo, editTopupPromo, resetTopupPromo, deleteTopupPromo,
+  renderAdminUsers, grantVault, openUserModal, userModalTab, saveUserInfo, saveUserWallet,
+  handleSaveSettings, uploadQr, removeQr, testWebhook, closeModal,
+  getProductsForPromo: () => PRODUCTS, getCategoriesForPromo: () => CATS
 });

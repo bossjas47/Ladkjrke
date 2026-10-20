@@ -1,39 +1,111 @@
-# Tactical Store
+# ASTRAPHEX HUB
 
-Static storefront for Arena Breakout accounts and in-game services (HTML + Tailwind CDN + Firebase Auth/Firestore).
+ร้านไอดีเกมและบริการในเกม Arena Breakout · HTML + Tailwind (CDN) + Firebase Auth/Firestore + Cloudflare Worker
+เว็บ: https://astraphex.panderx.xyz/
 
-## How an order works
+## ขั้นตอนขึ้นระบบ (ต้องทำหลังอัปโหลดไฟล์ชุดนี้)
 
-1. Customer signs in, picks a product and files an order. The browser only writes a `pending_payment` order
-   (`js/index.js`, `js/product.js`). It never sees stock or credentials.
-2. An admin opens `front/admin.html` > Orders, checks the transfer slip / TrueMoney voucher by hand and presses
-   **ยืนยันชำระ & ส่งมอบ**. That one transaction marks the stock item sold, decrements stock and sets the order
-   to `completed` with `accountDelivered`.
-3. The customer sees the credentials under "ออเดอร์ของฉัน" / account page once the order is `completed`.
+1. **อัปโหลดไฟล์เว็บ** ทั้งโฟลเดอร์ (ยกเว้น `worker/`, `functions/`, `scripts/`) ขึ้นโฮสต์เดิม
+2. **Publish Firestore rules ใหม่** (จำเป็น · มีคอลเลกชันใหม่หลายตัว)
+   Firebase console › Firestore › Rules › วางไฟล์ `firestore.rules` › Publish
+   หรือ `firebase deploy --only firestore:rules`
+3. **Deploy Cloudflare Worker ใหม่** (จำเป็นสำหรับ: จ่ายด้วยเครดิต/ส่งไอดีอัตโนมัติ, แก้ชื่อผู้ใช้/รหัสผ่าน/สิทธิ์ในหน้าผู้ใช้, แจ้งเตือน Discord)
+   - Cloudflare › Workers › เปิด Worker เดิม (หรือสร้างใหม่) › วางโค้ด `worker/slip-worker.js` ทั้งไฟล์ › Deploy
+   - Settings › Variables: `SERVICE_ACCOUNT` (secret, JSON service account ของ Firebase · ต้องเป็นบัญชี firebase-adminsdk เพราะใช้แก้ผู้ใช้ใน Auth ด้วย), `ALLOWED_ORIGIN` = `https://astraphex.panderx.xyz`
+   - ซองอั่งเปา TrueMoney อัตโนมัติ: `TRUEMONEY_PHONE` (secret) = เบอร์ TrueMoney Wallet ของร้าน เช่น `0812345678` ไม่ใส่ = ไม่เปิดรับซอง
+   - ตรวจสลิปอัตโนมัติ (ไม่บังคับ): `EASYSLIP_KEY`, `RECEIVER_MATCH`
+   - ถ้ายังไม่ deploy Worker ตัวนี้ ปุ่ม "ชำระด้วยเครดิต" จะขึ้นว่า "Worker เวอร์ชันเก่า" (Worker ตัวเก่าตอบทุกคำขอเป็นการตรวจสลิป จึงเคยขึ้นว่า "ยอดเงินไม่ถูกต้อง")
+4. **หลังบ้าน › ตั้งค่าร้าน** กรอกและกดบันทึก:
+   - URL ของ Worker
+   - Discord Webhook URL แล้วกด "ทดสอบ"
+   - ชื่อบัญชี / เลขพร้อมเพย์ / อัปโหลดรูป QR
+   - ช่องทางติดต่อ Line / Facebook / Discord
+   - ข้อความประกาศ และตัวเลขสถิติเริ่มต้น
+5. **หลังบ้าน › เติมเงิน & โปรโมชั่น** สร้างโปรเติมเงิน (โปรเดิมที่ฝังในหน้าเว็บ +25/+80/+200 ถูกเอาออกแล้ว)
+6. **หลังบ้าน › โค้ดส่วนลด** โค้ดเก่าแบบ "สุ่ม" ใช้ไม่ได้แล้ว ให้แก้เป็นบาทหรือ % (ตารางจะขึ้นว่า "แบบเก่า")
 
-## How a wallet top-up works
+ตั้งแอดมินคนแรก: `GOOGLE_APPLICATION_CREDENTIALS=serviceAccount.json node scripts/set-admin-claim.js <อีเมลล็อกอิน>` (ต้อง `npm i firebase-admin`) แล้วออกและเข้าระบบใหม่ คนต่อไปตั้งจากหลังบ้าน › ผู้ใช้ › สิทธิ์ Admin ได้ (ต้องมี Worker)
 
-Same pattern: `js/topup.js` files a `pending` request (slip reference or TrueMoney link). Admin > Topups checks the
-money arrived and presses **ยืนยัน & เติมเครดิต**; one transaction credits `users/{uid}.walletBalance` and marks the
-request `completed`. Browsers cannot write `users/*`. Nothing in the shop spends the wallet balance yet.
+## การทำงานหลัก
 
-## Page transitions
+| เรื่อง | ทำงานอย่างไร |
+|---|---|
+| จ่ายด้วยเครดิต | หน้าสินค้าเรียก Worker `/buy` ตรวจราคา โค้ดส่วนลด (ขอบเขต/โควต้า/สิทธิ์ต่อคน) ยอดเงิน และสต็อก แล้วหักเงิน ส่งไอดี (หรือเข้าคิวงานบริการ) ในทรานแซกชันเดียว |
+| จ่ายพร้อมเพย์ / TrueMoney | สร้างออเดอร์ `pending_payment` พร้อมรูปสลิป แอดมินกด "ยืนยันชำระ" ไอดีส่งให้ลูกค้าทันที / งานบริการเข้าคิว |
+| ซองอั่งเปา | ลูกค้าวางลิงก์ซองในหน้าเติมเงินหรือหน้าสินค้า Worker `/angpao` รับซองเข้าเบอร์ร้าน (โค้ดแปลงจาก tw-angpao เป็น JS) เติมเครดิตตามยอดที่ได้รับจริง + โบนัสโปร แล้วถ้าซื้อสินค้าก็ตัดเครดิตต่อทันที ยอดเกินเก็บเป็นเครดิต · ซองที่ใช้แล้วบันทึกใน `angpao_vouchers` |
+| เติมเงิน | แนบสลิป (ย่อรูปเก็บใน Firestore `slip_images`) แอดมินอนุมัติ · หรือเปิดตรวจอัตโนมัติผ่าน EasySlip |
+| สลิปซ้ำ | เก็บ SHA-256 ของไฟล์สลิปใน `slip_hashes` (สร้างได้ครั้งเดียว) · ตรวจอัตโนมัติใช้เลขอ้างอิงสลิป (`slip_refs`) |
+| สถานะงานบริการ | รอตรวจสอบ › กำลังดำเนินการ › ส่งมอบสำเร็จ · แอดมินพิมพ์หมายเหตุถึงลูกค้าได้ทุกออเดอร์ |
+| สถิติหน้าแรก | ค่าเริ่มต้นจากหลังบ้าน + ตัวนับจริง `stats/public` (ผู้สมัคร, ออเดอร์สำเร็จ, ยอดขาย) |
+| รายการสั่งซื้อล่าสุด | `recent_orders` เขียนเมื่อออเดอร์สำเร็จจริงเท่านั้น ชื่อผู้ซื้อเซ็นเซอร์ เช่น `us***01` |
+| ระงับบัญชี | ตั้งในหน้าผู้ใช้: Worker ปิดการล็อกอิน + rules บล็อกการสั่งซื้อ/เติมเงิน |
+| หมวดหมู่ | ไม่มีหมวดเริ่มต้นแล้ว ลบหมดก็ว่างจริง สินค้าที่ไม่มีหมวดแสดงเป็น "สินค้าอื่น ๆ" |
 
-`css/transition.css` (native View Transitions: header stays, page fades and rises 10px) and `js/transition.js` (fade fallback for
-Firefox) are linked from every page. Both switch off under `prefers-reduced-motion`. New pages need the same two tags.
+## สไตล์ (Tailwind) และรูป
 
-## Before going live
+- หน้าเว็บใช้ไฟล์ `css/tw.css` ที่คอมไพล์ไว้แล้ว ไม่โหลด Tailwind CDN อีก (หน้าเร็วขึ้น ไม่กระตุก) ถ้าแก้ class ใน .html / .js ต้องสร้างใหม่: `npm i -D tailwindcss@4 esbuild` แล้ว `node scripts/build-css.mjs` (ถ้าไม่สร้างใหม่ class ที่เพิ่งเพิ่มจะไม่มีผล)
+- รูปสินค้าและหมวดหมู่โหลดผ่าน wsrv.nl (บริการย่อรูปฟรี) ย่อให้พอดีขนาดที่แสดงและแปลงเป็น WebP ถ้าโหลดไม่ได้จะใช้ลิงก์เดิม ปิดได้ที่ `IMAGE_CDN` ใน `js/ui.js`
+- ลิงก์ Google Drive / Imgur แบบหน้าเว็บ ระบบแปลงเป็นลิงก์รูปให้เอง
 
-- Deploy `firestore.rules` (Firebase console > Firestore > Rules, or `firebase deploy --only firestore:rules`).
-- Make yourself admin: `GOOGLE_APPLICATION_CREDENTIALS=serviceAccount.json node scripts/set-admin-claim.js you@example.com`
-  (needs `npm i firebase-admin`), then sign out and in again. Admin is a custom claim, not an email check.
-- In admin > Settings fill in the PromptPay QR image URL and account name. Without them PromptPay is disabled.
-- Leave the stat tiles and banner empty unless you have real numbers; they are hidden when empty.
+## โครงไฟล์
 
-## Known gaps
+- `js/shell.js` header, แถบประกาศ, footer, เมนูล่าง 5 ปุ่ม, เมนู "เพิ่มเติม" (ยอดคงเหลือ บัญชี คิวงาน ติดต่อแอดมิน), หน้าต่าง "เครื่องมือ"
+- `js/ui.js` toast, คัดลอก, ย่อรูป, เรียก Worker · `js/pay.js` บล็อกพร้อมเพย์ + สลิป · `js/catalog.js` แถบกรองรวม + รายการสินค้า
+- `js/orders-ui.js` กล่องไอดี (ซ่อน/แสดงรหัส, คัดลอกแยก) และขั้นตอนงานบริการ · `js/promo.js` กติกาโค้ดส่วนลด
+- `js/admin.js`, `js/back/code.js` หลังบ้าน · `worker/slip-worker.js` ฝั่งเซิร์ฟเวอร์ (`node worker/test.mjs` ทดสอบ)
+- `assets/` โลโก้, favicon, รูปแชร์ลิงก์ (og-image) · `functions/` ระบบตรวจสลิป SlipOK แบบเก่า ไม่ได้ใช้แล้ว
 
-- Order totals and promo discounts are computed in the browser. Compare each order's amount with the product
-  price when you verify payment.
-- Top-up bonus packs (+25, +80, +200 credit) are hard-coded in `front/topup.html` and the credit amount comes from the browser; check it when you approve.
-- `account.js` shows the admin tab by email list (`ADMIN_EMAILS`), which is UI only; anyone can register that username. Data stays protected by the `admin` claim.
-- `js/admin.js` still carries an unused copy of the old storefront checkout code (section 8).
+## ข้อจำกัดที่ยังมี
+
+- ออเดอร์ที่จ่ายพร้อมเพย์/TrueMoney ราคาและโค้ดส่วนลดคำนวณในเบราว์เซอร์ (rules ตรวจตัวเลขไม่ให้ต่ำกว่าราคาสินค้า) ให้เทียบยอดก่อนกดยืนยัน
+- กันสลิปซ้ำแบบไฟล์เดียวกันเท่านั้น ถ้าแคปหน้าจอใหม่ ไฟล์จะต่างกัน แอดมินควรดูเลขอ้างอิงในสลิปด้วย (หรือเปิดตรวจอัตโนมัติ)
+- ผู้ใช้เก่าจะขึ้นในหน้า "ผู้ใช้" หลังจากเข้าสู่ระบบครั้งถัดไป และนับเป็นสถิติผู้ใช้เฉพาะคนที่สมัคร/ล็อกอินหลังอัปเดต
+- รหัสเกมของงานบริการเก็บเป็นข้อความจนกดส่งมอบสำเร็จ (ระบบลบให้ตอนนั้น)
+- ซองอั่งเปา: เซิร์ฟเวอร์ของ TrueMoney อาจบล็อกคำขอจาก Cloudflare Worker (ขึ้น "รับซองไม่สำเร็จ (HTTP_ERROR_403)") ยังไม่ได้ทดสอบกับซองจริง ทดสอบด้วยซองยอดเล็กก่อน
+- rules ยังไม่ได้รันใน Firebase emulator ควรทดลองสั่งซื้อ/เติมเงินจริงยอดเล็ก ๆ หลัง publish
+
+## เช่าไอดี (รายชั่วโมง)
+
+- **ตั้งสินค้า:** หลังบ้าน › สินค้า › เพิ่ม/แก้ไข (ประเภทไอดีเกม) › ติ๊ก "เปิดให้เช่า" ใส่ราคา/ชั่วโมง, ขั้นต่ำ, มัดจำ, แพ็กเกจเหมา (`ชั่วโมง ราคา` บรรทัดละแพ็ก)
+- **ใส่ไอดีให้เช่า:** ปุ่ม "สต็อก" เหมือนไอดีขาย (ไอดีที่ว่างอยู่ = พร้อมให้เช่า)
+- **ลูกค้า:** จ่ายด้วยเครดิตเท่านั้น (ค่าเช่า + มัดจำ) แล้วดูรหัสที่ `front/rentals.html` ("การเช่าของฉัน") ต่อเวลา/คืนไอดี/แจ้งปัญหาได้
+- **รหัสเข้าเกม:** ไม่อยู่ในเอกสารที่หน้าเว็บอ่านได้ Worker `/rent/credentials` ตอบเฉพาะตอนที่ยังไม่หมดเวลา
+- **หมดเวลา/คืนแล้ว:** ไอดีถูกล็อก (`cooldown`) → เปลี่ยนรหัสในเกม → หลังบ้าน แท็บ "เช่าไอดี" กด "คืนมัดจำ" หรือ "ยึดมัดจำ" (ใส่รหัสใหม่ได้) ไอดีกลับมาให้เช่าต่อ
+- **ต้องทำครั้งเดียว:** Worker › Settings › Triggers › Cron Triggers › เพิ่ม `*/5 * * * *` (ล็อกไอดีและแจ้ง Discord ตอนหมดเวลา; ถ้าไม่ตั้ง รหัสก็ยังดูไม่ได้หลังหมดเวลา แต่ไอดีจะไม่ถูกล็อกและไม่มีแจ้งเตือนจนกว่าลูกค้าจะกดดูรหัส)
+- Deploy `worker/slip-worker.js` ตัวใหม่ (เวอร์ชัน 6) และ publish `firestore.rules` ตัวใหม่ก่อนใช้
+
+## ตะกร้า
+
+- ไอดีขายขาดและงานบริการ ใส่ตะกร้าได้ (ปุ่ม "เพิ่มลงตะกร้า" ในหน้าสินค้า) ตะกร้าเก็บในบัญชีลูกค้า (`carts/{uid}`) สูงสุด 8 รายการ ไอดีเช่าใส่ตะกร้าไม่ได้
+- จ่ายด้วยเครดิตเท่านั้นที่ `front/cart.html` ผ่าน Worker `/cart` (ชำระรายการละ transaction: รายการที่ซื้อไม่สำเร็จจะไม่ตัดเงินและยังอยู่ในตะกร้า)
+- ข้อมูลงานบริการ (Facebook, อีเมล/รหัสเกม) กรอกตอนชำระ ไม่เก็บในตะกร้า
+- ต้อง deploy Worker ตัวใหม่และ publish `firestore.rules` (เพิ่ม `carts`)
+
+## คลังไอดี (ขายสิทธิ์ให้ลูกค้า)
+- หน้า `front/vault.html` (ลูกค้า) เปิดได้เมื่อ `users/{uid}.vaultUntil` ยังไม่หมด — แอดมินกดให้สิทธิ์ที่ หลังบ้าน > ผู้ใช้ > จัดการ > "คลังไอดี" (+N วัน / ปิดสิทธิ์)
+- ข้อมูลอยู่ใต้ `vaults/{uid}/{tabs,ids,team,logs}` แยกจากสต็อกขายหน้าร้าน ต้องเผยแพร่ `firestore.rules` ใหม่
+- ลิงก์ทีม `front/team.html?k=TOKEN` ไม่ต้องล็อกอิน ใช้ Worker ใหม่ (`/vault/team`, `/vault/team/done`) — ต้องอัปโหลด `slip-worker.js` ใหม่
+- ลูกค้าซื้อสิทธิ์เองด้วยเครดิต: แอดมินตั้งแพ็กเกจ (`30=199` บรรทัดละแพ็ก) และโปรทดลองฟรี (กี่วัน, ทุกบัญชีรับได้ครั้งเดียว) ที่ หลังบ้าน > ตั้งค่า; ราคาคิดฝั่ง Worker (`/vault/buy`) ซื้อซ้ำต่อท้ายวันที่เหลือ
+
+## URL ไม่มี .html (Vercel)
+- ไฟล์ `vercel.json` (`cleanUrls: true`) ทำให้ `/front/product.html` กลายเป็น `/front/product` และหน้าแรกคือ `home.html` (เดิม `index.html`): เปิดโดเมนเฉย ๆ (`/`) จะเข้า `home` ให้เอง และ `/index`, `/index.html` เปลี่ยนเส้นทางมา `/home`; ถ้าโฮสต์ไม่ใช่ Vercel ให้ตั้ง default document เป็น `home.html` (ลิงก์เก่าที่มี .html ยังใช้ได้ เปลี่ยนเส้นทางให้เอง)
+
+## กล่องสุ่ม (Loot box) + มินิเกม
+- **ต้องทำก่อนใช้:** deploy `worker/slip-worker.js` (เวอร์ชัน 5, เพิ่ม `/box/open`, `/box/claim`) และ publish `firestore.rules` ตัวใหม่ (เพิ่ม `boxes`, `box_opens`, `recent_wins`)
+- แอดมิน: หลังบ้าน › แท็บ **กล่องสุ่ม** › สร้างกล่อง ตั้งราคา และของรางวัล (เครดิต / ไอดีเกมจากสต็อก / งานบริการ) พร้อมระดับความหายากและน้ำหนัก (สัดส่วนที่ได้ = น้ำหนัก ÷ น้ำหนักรวม) กล่องที่ปิดอยู่ลูกค้าจะไม่เห็น
+- ลูกค้า: กล่องแสดงเป็นสินค้าในหมวด "กล่องสุ่ม" (หน้าสินค้าทั้งหมด) กดแล้วเข้า `front/box.html?id=…` เลือกมินิเกม (แงะตู้เซฟ / ยิงเป้า / ขูดบัตร) แล้วเปิดกล่อง ผลสุ่มตัดสินที่ Worker ก่อนเริ่มเกมเสมอ (ใช้ crypto random) ฝีมือในเกมไม่มีผลกับรางวัล
+- ถ้าของรางวัลหมดสต็อก/งานบริการเต็มคิว ระบบจะสุ่มใหม่เฉพาะรางวัลที่ส่งมอบได้ งานบริการต้องให้ลูกค้ากรอกข้อมูลรับรางวัล (เข้าคิวเหมือนออเดอร์ปกติ) ออเดอร์ที่มาจากกล่องมีวิธีชำระ `prize` ยอด 0 ไม่นับเป็นยอดขาย/คืนเงิน
+- หมายเหตุ: การสุ่มได้ของแบบเสียเงินอาจเข้าข่ายกฎหมายพนัน/คุ้มครองผู้บริโภคตามพื้นที่ ควรตรวจสอบก่อนเปิดจริง
+
+## โปรแกรมไอดีไก่ (หลังบ้าน) + สิทธิ์พนักงาน
+- **ต้องทำก่อนใช้:** deploy Worker เวอร์ชัน 6 และ publish `firestore.rules` ตัวใหม่ (เพิ่ม `vault_sales`, สิทธิ์ `staff`, แอดมินอ่านสถิติคลังไอดีได้)
+- หลังบ้าน › แท็บ **โปรแกรมไอดีไก่**: ผู้ใช้ที่มีสิทธิ์ (เหลือกี่วัน, จำนวนไอดีในคลัง, ลูกทีม), +/− วัน / ปิดสิทธิ์, ให้สิทธิ์ผู้ใช้ใหม่, ประวัติซื้อแพ็กเกจ/ทดลองฟรี/การปรับโดยแอดมิน, ตั้งแพ็กเกจและทดลองฟรี (ย้ายมาจากหน้าตั้งค่า) — ประวัติเริ่มเก็บตั้งแต่ Worker v6
+- **สิทธิ์รายคน:** หลังบ้าน › ผู้ใช้ › เปิดผู้ใช้ › ติ๊กสิทธิ์ทีมงานได้ทีละข้อ: ทำคิวงานบริการ · ยืนยันชำระ/ยกเลิก/คืนเงิน/ดูสลิป/เติมเงิน · สินค้า-สต็อก-หมวดหมู่ · โค้ดส่วนลด · ไอดีเช่า · กล่องสุ่ม · โปรแกรมไอดีไก่ · ผู้ใช้ (ดู/ปรับเครดิต/ข้อมูลติดต่อ) แต่ละคนเห็นเฉพาะแท็บที่ได้สิทธิ์ ไม่ต้องใส่ PIN ส่วน ตั้งค่าร้าน, เปลี่ยนรหัสผ่าน/ชื่อล็อกอิน/ระงับบัญชี และตั้งสิทธิ์ ทำได้เฉพาะ Admin
+- สิทธิ์เก็บเป็น custom claim `perms` (ล็อกจริงใน `firestore.rules` และ Worker ไม่ใช่แค่ซ่อนปุ่ม) ต้องมี Worker v6 เพื่อบันทึก และผู้ที่ถูกเปลี่ยนสิทธิ์ต้องออกแล้วเข้าระบบใหม่
+- หมายเหตุ: สิทธิ์ "ผู้ใช้" และ "ยืนยันชำระ" แตะยอดเครดิตลูกค้าได้ ให้เฉพาะคนที่ไว้ใจ
+
+## ตรวจสลิปด้วย API อย่างเดียว
+- เติมเงินและซื้อสินค้าด้วยสลิป (พร้อมเพย์) ตรวจที่ Worker ผ่าน EasySlip เท่านั้น ผ่านแล้วได้เครดิต/ออเดอร์ทันที ไม่ผ่านหรือ API ล่ม ลูกค้าจะเห็นข้อความให้ลองใหม่ ไม่มีคิวให้แอดมินอนุมัติสลิปเอง (`firestore.rules` ปิดการสร้างออเดอร์/รายการเติมเงินจากเบราว์เซอร์แล้ว ต้อง publish ใหม่)
+- ซื้อสินค้าด้วยสลิป: Worker เติมเครดิตเท่ายอดสินค้า (ไม่มีโบนัสโปร) แล้วซื้อให้ทันที ถ้าซื้อไม่สำเร็จ (สต็อกหมด/ราคาเปลี่ยน) เครดิตยังอยู่ในบัญชี
+- ต้องตั้ง `EASYSLIP_KEY`, `RECEIVER_MATCH` ที่ Worker และติ๊ก "เปิดระบบตรวจสลิปด้วย API" ในหลังบ้าน › ตั้งค่า ถ้าไม่ตั้ง ลูกค้าจะส่งสลิปไม่ได้ (ยังเติมด้วยซองอั่งเปา/จ่ายด้วยเครดิตได้)
+- รายการเก่าที่ค้างรอตรวจอยู่ ยังอนุมัติ/ไม่อนุมัติได้ในหลังบ้านตามปกติ

@@ -1,4 +1,4 @@
-# Tactical Store — System Specification & Security Architecture (skill.md)
+# ASTRAPHEX HUB — System Specification & Security Architecture (skill.md)
 
 ข้อกำหนดทางเทคนิค สถาปัตยกรรมความปลอดภัย และระบบการออกแบบสำหรับโปรเจกต์ Tactical Store (Arena Breakout Market)
 
@@ -9,7 +9,7 @@
 ### 1.1 Role Separation & Admin Designation (การคัดแยกสิทธิ์และตั้งแอดมิน)
 - **แอดมินหลักของระบบ (Master Admin):** กำหนดให้ผู้ใช้ `atest` เป็นผู้ดูแลระบบ (ADMIN) โดยอัตโนมัติ (ครอบคลุมทั้ง displayName, username ในเครื่อง และอีเมล `atest@...`)
 - **การซ่อนระบบหลังบ้านจากผู้ใช้ธรรมดา (Hidden Backoffice for Regular Users):**
-  - ในหน้าร้านค้า (`index.html`) และหน้าบัญชี (`front/account.html`): ผู้ใช้ธรรมดาจะไม่เห็นปุ่มหรือแถบเมนูหลังบ้านเลย (`hidden` 100%)
+  - ในหน้าร้านค้า (`home.html`) และหน้าบัญชี (`front/account.html`): ผู้ใช้ธรรมดาจะไม่เห็นปุ่มหรือแถบเมนูหลังบ้านเลย (`hidden` 100%)
   - เมนูหลังบ้านถูกย้ายเข้าไปอยู่ใน **"หมวดหมู่บัญชี" (`front/account.html`)** และจะปรากฏเฉพาะเมื่อผู้ใช้ที่เข้าสู่ระบบคือ `atest` เท่านั้น
 - **การป้องกันการเข้าถึง URL หลังบ้านโดยตรง (Direct Access Blocker):**
   - หากผู้ใช้ทั่วไปพยายามเปิดหน้า `front/admin.html` โดยตรง ระบบจะตรวจสอบสิทธิ์และบล็อกทันที แสดงหน้าต่างแจ้งเตือน `403 ACCESS FORBIDDEN: เฉพาะผู้ใช้ atest เท่านั้น` และรีไดเรกต์กลับอัตโนมัติ
@@ -35,7 +35,7 @@
 ## 2. Design System & UI Consistency (การออกแบบ)
 
 ### 2.1 Tactical Aesthetics & Icon Matching
-- **Icons Consistency:** ไอคอนทั้งหมดในหน้าบัญชี (`front/account.html`) และหน้าร้านค้า (`index.html`) เป็น SVG สไตล์ Tactical เดียวกัน (Stroke Width 2, Amber Accents, Dark Surface)
+- **Icons Consistency:** ไอคอนทั้งหมดในหน้าบัญชี (`front/account.html`) และหน้าร้านค้า (`home.html`) เป็น SVG สไตล์ Tactical เดียวกัน (Stroke Width 2, Amber Accents, Dark Surface)
 - **Background & HUD Theme:** Deep Black (`#050505`), Glass-card gradients, ขอบ White Frost (`rgba(255, 255, 255, 0.08)`), Tactical Grid BG
 - **Typography:** `Outfit` (Heading font, uppercase HUD style) และ `Prompt` (Body font ภาษาไทยและอังกฤษ)
 
@@ -593,3 +593,35 @@ Create a floating #ffffff 28px-radius pricing callout over a product render usin
 
 ```
 
+# Ponytail, lazy senior dev mode
+
+You are a lazy senior developer. The best code is the code never written. You solve the whole problem with the least new code. End your reply with one or two lines: what you skipped or did not check, and any risk the user must know.
+
+## Before you write
+
+Read the task and the code it touches. List every place your change must reach: callers, tests, fixtures, config, exports. Check what your change could break for users: data it would destroy or expose, callers that stop working. That is scope. Extra features are not.
+
+## The smallest complete change
+
+Take the first option that fully works:
+
+1. Does it need to exist? Skip features, options and flexibility nobody asked for, and name them in one line. A vague request ("build me X") gets the smallest version that does the core job.
+2. Already in this codebase (a helper, component, service, pattern)? Use it the way the surrounding code does.
+3. Standard library or a platform feature? Use it, unless the project has its own. A house component beats a native widget.
+4. An installed dependency? Use it. Never add a dependency for a few lines.
+5. Can it be one line a reader gets at a glance? One line.
+6. Otherwise: the minimum code that works.
+
+- Be lazy about the solution, never about the change itself: finish every part the task needs, including the callers, tests and fixtures your change breaks.
+- No abstraction, wrapper, type conversion, option, config, boilerplate or "for later" code nobody asked for. Keep values in the form the platform already gives you. Deletion beats addition. Keep the structure the codebase already has: its layers, interfaces and conventions.
+- The shortest working diff wins, once you know everything it must touch. A one-liner that needs decoding is not short.
+- Comment only the why the code cannot show, in one line.
+- Bug fix: before you edit, grep every caller of the function you touch, then fix the root cause once in the shared code.
+- Code you move or merge keeps its error handling and validation.
+- Between options of equal size, take the one that is correct on edge cases.
+- Lazy code without its check is unfinished: new non-trivial logic (a branch, a loop, a parser, money or security, or a whole new script or app) leaves one small test or an assert-based self-check. Trivial changes need none.
+- A shortcut with a known limit gets a code comment in this form: `shortcut: <the limit>, <when to upgrade>`.
+
+Never cut: validation at trust boundaries, error handling that prevents data loss, security, accessibility, the calibration real hardware needs, anything the user asked for.
+
+(Yes, this file also applies to agents working on the ponytail repo itself. Especially to them.)

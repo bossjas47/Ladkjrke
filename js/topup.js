@@ -1,306 +1,157 @@
 import { db, auth } from "../firebase-config.js";
-import {
-  collection,
-  doc,
-  setDoc,
-  serverTimestamp,
-  query,
-  where,
-  onSnapshot
-} from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
-import { 
-  onAuthStateChanged, 
-  signOut 
-} from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
+import { collection, onSnapshot, query, where } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+import { onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js";
+import { esc, num, baht, money, toast, fmtDate, onSettings, getSettings, workerBase, callWorker, readSlipQr } from "./ui.js";
+import { mountPromptPay, promptpayReady } from "./pay.js";
 
 /**
- * TACTICAL STORE — Topup & Wallet Controller (js/topup.js)
- * The browser only files a pending top-up request. An admin checks the payment and credits the
- * wallet (see approveTopup in admin.js); firestore.rules block any client write to users/*.
+ * Top-up page. Credit is never written from the browser (firestore.rules). Two ways in:
+ *  - auto (admin turned on slip check + Worker): the QR on the slip is checked by the Worker and credited at once;
+ *  - manual: a pending request with the slip image; an admin approves it in the back office.
+ *  - ซองอั่งเปา TrueMoney (needs the Worker): redeemed by the Worker and credited at once.
+ * Bonus comes from topup_promos (admin-managed): the best active promotion whose minimum the amount reaches.
  */
+const MIN = 20, MAX = 50000;
+let user = null, amount = 0, method = 'promptpay', promos = [], history = [], submitting = false, pp = null;
+const $ = (id) => document.getElementById(id);
 
-let currentUser = null;
-let currentAmount = 500;
-let currentBonus = 25;
-let currentMethod = 'promptpay';
-let systemSettings = null;
-let unsubWallet = null;
-let unsubHistory = null;
-let historyList = [];
-const esc = (v) => String(v ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
-const TOPUP_STATUS = {
-  pending: ['รอตรวจสอบ', 'text-launchOrange'],
-  completed: ['เติมแล้ว', 'text-appleBlue'],
-  rejected: ['ไม่อนุมัติ', 'text-slate']
-};
+export function bestPromo(list, amt) {
+  let best = null, bonus = 0;
+  for (const p of list) {
+    if (p.active === false || amt < num(p.minAmount)) continue;
+    const b = p.type === 'percent' ? Math.floor(amt * num(p.value) / 100) : Math.floor(num(p.value));
+    if (b > bonus) { bonus = b; best = p; }
+  }
+  return { promo: best, bonus };
+}
+const promoText = (p) => p.type === 'percent' ? `รับโบนัส ${num(p.value)}%` : `รับโบนัส ${money(p.value, 0)} บาท`;
 
-document.addEventListener('DOMContentLoaded', () => {
-  initAuthListener();
-  initSettingsListener();
-  updateTopupCalculations();
-});
+function renderPromos() {
+  const box = $('promo-list');
+  const list = promos.filter(p => p.active !== false).sort((a, b) => num(a.minAmount) - num(b.minAmount));
+  $('promo-section').classList.toggle('hidden', !list.length);
+  box.innerHTML = list.map(p => `<button type="button" onclick="setAmount(${num(p.minAmount)})" class="snap-start shrink-0 w-56 text-left rounded-2xl p-4 border transition ${amount >= num(p.minAmount) && bestPromo(promos, amount).promo?.id === p.id ? 'border-2 border-pricingBlue bg-[#f2f8ff]' : 'border-hairline bg-gallery hover:border-steel'}">
+      <p class="text-xs text-slate">เติมครบ ${money(p.minAmount, 0)} บาท</p>
+      <p class="text-lg font-heading font-semibold text-emerald-600 mt-0.5">${esc(promoText(p))}</p>
+      ${p.label ? `<p class="text-xs text-slate mt-1 line-clamp-1">${esc(p.label)}</p>` : ''}
+    </button>`).join('');
+  const quick = [...new Set([50, 100, 300, 500, ...list.map(p => num(p.minAmount))])].filter(v => v >= MIN).sort((a, b) => a - b).slice(0, 8);
+  $('quick-amounts').innerHTML = quick.map(v => `<button type="button" onclick="setAmount(${v})" class="rounded-xl py-2.5 text-[15px] font-semibold border transition ${amount === v ? 'border-pricingBlue bg-[#f2f8ff] text-pricingBlue' : 'border-hairline bg-gallery'}">${money(v, 0)}</button>`).join('');
+}
 
-// ==========================================
-// 1. AUTH & LIVE WALLET LISTENER
-// ==========================================
-function initAuthListener() {
-  onAuthStateChanged(auth, (user) => {
-    currentUser = user;
-    const loggedOut = document.getElementById('auth-logged-out');
-    const loggedIn = document.getElementById('auth-logged-in');
-    const nameEl = document.getElementById('user-display-name');
+function setAmount(v) { $('amount-input').value = v || ''; onAmount(); }
+function onAmount() {
+  const v = Math.round(num($('amount-input').value) * 100) / 100;
+  amount = v;
+  const { promo, bonus } = bestPromo(promos, v);
+  $('sum-amount').textContent = baht(v);
+  $('sum-bonus').textContent = `+${baht(bonus)}`;
+  $('sum-credit').textContent = money(v + bonus);
+  $('sum-promo').textContent = promo ? `ได้รับโปรโมชั่น: เติมครบ ${money(promo.minAmount, 0)} ${promoText(promo)}` : '';
+  $('tm-amount').textContent = baht(v);
+  renderPromos();
+  pp?.refresh();
+}
 
-    if (user) {
-      if (loggedOut) loggedOut.classList.add('hidden');
-      if (loggedIn) loggedIn.classList.remove('hidden');
-      const name = user.displayName || user.email?.split('@')[0] || 'Agent';
-      if (nameEl) nameEl.innerText = name;
-      
-      // Live listener on user wallet doc
-      listenUserWallet(user.uid);
-      listenTopupHistory(user.uid);
-    } else {
-      if (loggedIn) loggedIn.classList.add('hidden');
-      if (loggedOut) loggedOut.classList.remove('hidden');
-      if (unsubWallet) unsubWallet();
-      if (unsubHistory) unsubHistory();
-      unsubWallet = unsubHistory = null;
-      historyList = [];
-      updateWalletUI(0);
-      renderTopupHistory();
-    }
+function switchTopupPaymentTab(m) {
+  if (m === 'angpao' && !workerBase()) m = 'promptpay';
+  method = m;
+  $('tab-angpao').classList.toggle('hidden', !workerBase());
+  $('topup-tabs').classList.toggle('grid-cols-2', !!workerBase()); $('topup-tabs').classList.toggle('grid-cols-1', !workerBase());
+  ['promptpay', 'angpao'].forEach(k => {
+    $(`panel-${k}`).classList.toggle('hidden', k !== m);
+    $(`tab-${k}`).className = `py-2 rounded-full font-medium transition ${k === m ? 'bg-gallery text-ink shadow-sm' : 'text-slate hover:text-ink'}`;
   });
+  updateNote();
+}
+const autoMode = () => getSettings().slipAutoVerify === true && !!workerBase();
+function updateNote() {
+  $('topup-mode-note').textContent = method === 'promptpay'
+    ? (autoMode() ? 'ระบบตรวจสลิปอัตโนมัติ ผ่านแล้วได้เครดิตทันที' : 'ร้านยังไม่เปิดระบบตรวจสลิปอัตโนมัติ (เติมด้วยซองอั่งเปาแทนได้)')
+    : 'รับซองอัตโนมัติ เครดิตเข้าทันที';
+  if (!submitting) $('btn-topup').textContent = method === 'promptpay' ? 'ส่งสลิปและรับเครดิต' : 'รับซองและเติมเครดิต';
 }
 
-function listenUserWallet(uid) {
-  if (unsubWallet) unsubWallet();
-  unsubWallet = onSnapshot(doc(db, "users", uid), (snap) => {
-    updateWalletUI(snap.exists() ? (parseFloat(snap.data().walletBalance) || 0) : 0);
-  }, (err) => {
-    console.warn("Wallet listener:", err);
-    updateWalletUI(0);
-  });
+function setBusy(on, label) {
+  submitting = on;
+  $('btn-topup').disabled = on;
+  if (on) $('btn-topup').textContent = label; else updateNote();
 }
 
-function listenTopupHistory(uid) {
-  if (unsubHistory) unsubHistory();
-  unsubHistory = onSnapshot(query(collection(db, "topup_transactions"), where("uid", "==", uid)), (snap) => {
-    historyList = snap.docs.map(d => d.data());
-    historyList.sort((a, b) => (b.createdAt?.toMillis?.() || Date.now()) - (a.createdAt?.toMillis?.() || Date.now()));
-    renderTopupHistory();
-  }, (err) => console.warn("Topup history:", err));
+async function executeTopup() {
+  if (submitting) return;
+  if (!user) { toast('กรุณาเข้าสู่ระบบก่อนเติมเงิน', 'error'); return; }
+  if (method === 'angpao') return redeemAngpao();
+  if (!(amount >= MIN && amount <= MAX)) { toast(`กรุณาใส่จำนวนเงิน ${MIN} – ${money(MAX, 0)} บาท`, 'error'); $('amount-input').focus(); return; }
+  if (!promptpayReady()) { toast('ร้านยังไม่ได้ตั้งค่า QR พร้อมเพย์', 'error'); return; }
+  if (!autoMode()) { toast('ร้านยังไม่เปิดระบบตรวจสลิปอัตโนมัติ กรุณาติดต่อแอดมิน', 'error'); return; }
+  const file = pp.getFile();
+  if (!file) { toast('กรุณาแนบรูปสลิปโอนเงิน', 'error'); return; }
+  setBusy(true, 'กำลังตรวจสลิป…');
+  await verifySlip(file);
+  setBusy(false);
 }
 
-function updateWalletUI(amount) {
-  const heroBal = document.getElementById('hero-wallet-balance');
-  const navBal = document.getElementById('nav-wallet-balance');
-  const formatted = `฿${amount.toFixed(2)}`;
-  if (heroBal) heroBal.innerText = formatted;
-  if (navBal) navBal.innerText = formatted;
-}
-
-// ==========================================
-// 2. SETTINGS LISTENER (API KEYS & CONFIG)
-// ==========================================
-function initSettingsListener() {
-  onSnapshot(doc(db, "system", "settings"), (snap) => {
-    systemSettings = snap.exists() ? snap.data() : null;
-    updateTopupCalculations();
-  }, (e) => console.warn("Settings listener error:", e));
-}
-
-// ==========================================
-// 3. PACKAGE PRESETS & PAYMENT SWITCHER
-// ==========================================
-function selectTopupAmount(amt, bonus = 0) {
-  currentAmount = amt;
-  currentBonus = bonus;
-  const customInput = document.getElementById('custom-amount-input');
-  if (customInput) customInput.value = '';
-
-  // Highlight card
-  document.querySelectorAll('.topup-pack-card').forEach(card => {
-    const cardAmt = parseInt(card.getAttribute('data-amt'), 10);
-    if (cardAmt === amt) {
-      card.className = 'topup-pack-card apple-card p-4 text-left border-2 border-pricingBlue shadow-sm transition-all rounded-2xl relative bg-gallery';
-    } else {
-      card.className = 'topup-pack-card apple-card p-4 text-left hover:border-pricingBlue transition-all rounded-2xl relative border border-hairline bg-gallery';
-    }
-  });
-
-  updateTopupCalculations();
-}
-
-function handleCustomAmount(val) {
-  let num = parseFloat(val);
-  if (isNaN(num) || num < 20) {
-    num = 20;
-  }
-  currentAmount = num;
-  currentBonus = 0; // Custom amount has no preset bonus
-
-  // Remove highlight on preset cards
-  document.querySelectorAll('.topup-pack-card').forEach(card => {
-    card.className = 'topup-pack-card apple-card p-4 text-left hover:border-pricingBlue transition-all rounded-2xl relative border border-hairline bg-gallery';
-  });
-
-  updateTopupCalculations();
-}
-
-function updateTopupCalculations() {
-  const payEl = document.getElementById('summary-pay-amount');
-  const getEl = document.getElementById('summary-get-credit');
-  const qrAmt = document.getElementById('qr-exact-amount');
-  const voucherAmt = document.getElementById('voucher-exact-note');
-  const qrImg = document.getElementById('topup-qr-image');
-
-  const finalCredit = currentAmount + currentBonus;
-
-  if (payEl) payEl.innerText = `฿${currentAmount.toFixed(2)}`;
-  if (getEl) getEl.innerText = `${finalCredit.toFixed(2)} เครดิต${currentBonus > 0 ? ` (+${currentBonus} โบนัส)` : ''}`;
-  if (qrAmt) qrAmt.innerText = `฿${currentAmount.toFixed(2)}`;
-  if (voucherAmt) voucherAmt.innerText = `฿${currentAmount.toFixed(2)}`;
-
-  // Real QR image and account name come from admin settings; never show a made-up QR.
-  const qrUrl = systemSettings?.promptpayQrUrl;
-  const nameEl = document.getElementById('topup-promptpay-name');
-  if (nameEl) nameEl.innerText = systemSettings?.promptpayName || 'ติดต่อแอดมิน';
-  if (qrImg) {
-    if (qrUrl) qrImg.src = qrUrl; else qrImg.removeAttribute('src');
-    qrImg.classList.toggle('hidden', !qrUrl);
-  }
-}
-
-function switchTopupPaymentTab(method) {
-  currentMethod = method;
-  const tabPP = document.getElementById('tab-topup-promptpay');
-  const tabTM = document.getElementById('tab-topup-truemoney');
-  const panelPP = document.getElementById('panel-topup-promptpay');
-  const panelTM = document.getElementById('panel-topup-truemoney');
-
-  if (method === 'promptpay') {
-    if (tabPP) tabPP.className = 'flex-1 py-1.5 rounded-button font-medium transition-all bg-gallery text-ink shadow-sm flex items-center justify-center gap-1.5';
-    if (tabTM) tabTM.className = 'flex-1 py-1.5 rounded-button font-medium transition-all text-slate hover:text-ink flex items-center justify-center gap-1.5';
-    if (panelPP) panelPP.classList.remove('hidden');
-    if (panelTM) panelTM.classList.add('hidden');
-  } else {
-    if (tabPP) tabPP.className = 'flex-1 py-1.5 rounded-button font-medium transition-all text-slate hover:text-ink flex items-center justify-center gap-1.5';
-    if (tabTM) tabTM.className = 'flex-1 py-1.5 rounded-button font-medium transition-all bg-gallery text-ink shadow-sm flex items-center justify-center gap-1.5';
-    if (panelPP) panelPP.classList.add('hidden');
-    if (panelTM) panelTM.classList.remove('hidden');
-  }
-}
-
-// ==========================================
-// 4. FILE A PENDING TOP-UP REQUEST
-// ==========================================
-let isTopupSubmitting = false;
-
-async function executeTopup(method) {
-  if (isTopupSubmitting) return;
-  if (!currentUser) {
-    triggerToast('กรุณาเข้าสู่ระบบก่อนเติมเงิน');
-    return;
-  }
-
-  const input = document.getElementById(method === 'promptpay' ? 'topup-slip-ref' : 'topup-voucher-link');
-  const proof = input ? input.value.trim() : '';
-  if (method === 'promptpay' && proof.length < 6) {
-    triggerToast('กรุณากรอกเลขอ้างอิงสลิปให้ครบ');
-    input?.focus();
-    return;
-  }
-  if (method === 'truemoney' && !/^https:\/\/gift\.truemoney\.com\//.test(proof)) {
-    triggerToast('กรุณากรอกลิงก์ซองของขวัญ TrueMoney ให้ถูกต้อง');
-    input?.focus();
-    return;
-  }
-
-  const btn = document.getElementById(method === 'promptpay' ? 'btn-confirm-topup-pp' : 'btn-confirm-topup-tm');
-  const label = btn ? btn.innerText : '';
-  isTopupSubmitting = true;
-  if (btn) { btn.disabled = true; btn.innerText = 'กำลังส่งคำขอ...'; }
-
+/** TrueMoney gift voucher: the Worker redeems it into the shop wallet and credits the amount received + promo bonus. */
+async function redeemAngpao() {
+  const link = $('tm-link').value.trim();
+  if (!/^https:\/\/gift\.truemoney\.com\//.test(link)) { toast('กรุณาวางลิงก์ซองอั่งเปา TrueMoney ให้ถูกต้อง', 'error'); $('tm-link').focus(); return; }
+  setBusy(true, 'กำลังรับซอง…');
   try {
-    const ref = doc(collection(db, "topup_transactions"));
-    await setDoc(ref, {
-      txnId: 'TOPUP-' + ref.id.slice(0, 8).toUpperCase(),
-      uid: currentUser.uid,
-      email: currentUser.email || '',
-      amount: currentAmount,
-      bonusCredit: currentBonus,
-      finalCredit: currentAmount + currentBonus,
-      paymentMethod: method,
-      proofRef: proof,
-      status: 'pending',
-      createdAt: serverTimestamp()
-    });
-    if (input) input.value = '';
-    triggerToast('ส่งคำขอแล้ว แอดมินจะตรวจสอบและเติมเครดิตให้');
-  } catch (err) {
-    console.warn("Topup request failed:", err);
-    triggerToast('ส่งคำขอไม่สำเร็จ กรุณาลองใหม่อีกครั้ง');
-  } finally {
-    isTopupSubmitting = false;
-    if (btn) { btn.disabled = false; btn.innerText = label; }
-  }
+    const r = await callWorker('/angpao', { link });
+    $('tm-link').value = '';
+    toast(`เติมเครดิตสำเร็จ +${money(r.credit)}${r.bonus ? ` (รวมโบนัส ${money(r.bonus)})` : ''}`, 'success');
+  } catch (e) {
+    console.warn('angpao:', e);
+    toast(e.message || 'รับซองไม่สำเร็จ', 'error');
+  } finally { setBusy(false); }
 }
 
-function renderTopupHistory() {
-  const tbody = document.getElementById('topup-history-tbody');
-  const empty = document.getElementById('topup-history-empty');
-  if (!tbody) return;
+/** Slips are checked by the API only: credited at once, or an error to try again (no manual queue). */
+async function verifySlip(file) {
+  try {
+    const payload = await readSlipQr(file);
+    if (!payload) { toast('อ่าน QR บนสลิปไม่ได้ กรุณาใช้รูปสลิปที่เห็น QR ชัดเจน (ไม่ครอป ไม่เบลอ)', 'error'); return; }
+    const r = await callWorker('/', { amount, payload });
+    if (r.status === 'completed') { pp.reset(); toast(`เติมเครดิตสำเร็จ +${money(r.credit)}`, 'success'); return; }
+    toast(r.message || 'ตรวจสลิปไม่ผ่าน', 'error');
+  } catch (e) { console.warn('slip:', e); toast(e.message || 'ตรวจสลิปไม่ได้ในตอนนี้ กรุณาลองใหม่อีกครั้ง', 'error'); }
+}
 
-  if (historyList.length === 0) {
-    tbody.innerHTML = '';
-    if (empty) empty.classList.remove('hidden');
-    return;
-  }
-  if (empty) empty.classList.add('hidden');
-
-  tbody.innerHTML = historyList.map(item => {
-    const [label, cls] = TOPUP_STATUS[item.status] || [item.status || '-', 'text-slate'];
-    const when = item.createdAt?.toDate ? item.createdAt.toDate().toLocaleString('th-TH') : 'เมื่อสักครู่';
-    return `
-    <tr class="hover:bg-mist/70 transition-colors">
-      <td class="py-2.5 px-3 font-mono font-medium text-ink">#${esc(item.txnId)}</td>
-      <td class="py-2.5 px-3 text-slate">${item.paymentMethod === 'promptpay' ? 'พร้อมเพย์' : 'TrueMoney'}</td>
-      <td class="py-2.5 px-3 font-mono font-medium text-ink">฿${Number(item.amount).toFixed(2)}</td>
-      <td class="py-2.5 px-3 font-mono font-semibold text-ink">+${Number(item.finalCredit).toFixed(2)}</td>
-      <td class="py-2.5 px-3 text-xs font-semibold ${cls}">${esc(label)}</td>
-      <td class="py-2.5 px-3 text-right font-mono text-[10px] text-steel">${esc(when)}</td>
-    </tr>`;
+const ST = { pending: ['รอตรวจสอบ', 'bg-[#fff3e6] text-[#a04a00]'], completed: ['เติมแล้ว', 'bg-[#e8f8ee] text-[#0a7a3b]'], rejected: ['ไม่อนุมัติ', 'bg-mist text-slate'] };
+function renderHistory() {
+  const box = $('topup-history');
+  if (!user) { box.innerHTML = `<p class="py-8 text-center text-slate text-sm">เข้าสู่ระบบเพื่อดูประวัติการเติมเงิน</p>`; return; }
+  if (!history.length) { box.innerHTML = `<p class="py-8 text-center text-slate text-sm">ยังไม่มีประวัติการเติมเงิน</p>`; return; }
+  box.innerHTML = history.map(t => {
+    const [label, cls] = ST[t.status] || [t.status, 'bg-mist text-slate'];
+    return `<div class="py-3 flex items-center justify-between gap-3">
+      <div class="min-w-0"><p class="font-medium">${baht(t.amount)} ${num(t.bonusCredit) ? `<span class="text-emerald-600 text-sm">+${money(t.bonusCredit)} โบนัส</span>` : ''}</p>
+        <p class="text-xs text-slate truncate">${esc(t.txnId || '')} · ${t.paymentMethod === 'angpao' ? 'ซองอั่งเปา' : t.paymentMethod === 'truemoney' ? 'TrueMoney' : 'พร้อมเพย์'} · ${esc(fmtDate(t.createdAt))}</p>
+        ${t.status === 'rejected' && t.adminNote ? `<p class="text-xs text-launchOrange">${esc(t.adminNote)}</p>` : ''}</div>
+      <span class="text-[11px] font-semibold px-2.5 py-1 rounded-full whitespace-nowrap ${cls}">${label}</span></div>`;
   }).join('');
 }
 
-function triggerToast(msg) {
-  const box = document.getElementById('toast-box');
-  const txt = document.getElementById('toast-text');
-  if (!box || !txt) return;
+let unsubHist = null;
+onAuthStateChanged(auth, (u) => {
+  user = u;
+  $('login-needed').classList.toggle('hidden', !!u);
+  if (unsubHist) { unsubHist(); unsubHist = null; }
+  history = [];
+  renderHistory();
+  if (u) unsubHist = onSnapshot(query(collection(db, 'topup_transactions'), where('uid', '==', u.uid)), (s) => {
+    history = s.docs.map(d => d.data()).sort((a, b) => (b.createdAt?.toMillis?.() ?? Date.now()) - (a.createdAt?.toMillis?.() ?? Date.now())).slice(0, 30);
+    renderHistory();
+  }, (e) => console.warn('history:', e));
+});
+onSnapshot(collection(db, 'topup_promos'), (s) => { promos = s.docs.map(d => ({ id: d.id, ...d.data() })); onAmount(); }, () => { promos = []; onAmount(); });
+onSettings(() => switchTopupPaymentTab(method));
 
-  txt.innerText = msg;
-  box.classList.remove('opacity-0', '-translate-y-4', 'scale-95', 'pointer-events-none');
-  box.classList.add('opacity-100', 'translate-y-0', 'scale-100');
-
-  setTimeout(() => {
-    box.classList.add('opacity-0', '-translate-y-4', 'scale-95', 'pointer-events-none');
-    box.classList.remove('opacity-100', 'translate-y-0', 'scale-100');
-  }, 2800);
-}
-
-async function handleSignOut() {
-  try {
-    await signOut(auth);
-    window.location.reload();
-  } catch (e) {
-    console.warn("Sign out error:", e);
-  }
-}
-
-// Window bindings
-window.selectTopupAmount = selectTopupAmount;
-window.handleCustomAmount = handleCustomAmount;
-window.switchTopupPaymentTab = switchTopupPaymentTab;
-window.executeTopup = executeTopup;
-window.renderTopupHistory = renderTopupHistory;
-window.handleSignOut = handleSignOut;
+pp = mountPromptPay($('panel-promptpay'), { getAmount: () => amount, idPrefix: 'tp' });
+$('amount-input').addEventListener('input', onAmount);
+const preset = Number(new URLSearchParams(location.search).get('amount'));
+if (preset >= MIN) $('amount-input').value = preset;
+switchTopupPaymentTab('promptpay');
+onAmount();
+Object.assign(window, { setAmount, switchTopupPaymentTab, executeTopup });
